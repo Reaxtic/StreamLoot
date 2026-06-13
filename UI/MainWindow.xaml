@@ -1,0 +1,289 @@
+<Window x:Class="UI.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:tb="http://www.hardcodet.net/taskbar"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:UI"
+        mc:Ignorable="d"
+        Title="Stream Loot"
+        MinHeight="700" Height="700"
+        MinWidth="1100" Width="1100"
+        ResizeMode="CanResizeWithGrip"
+        WindowStyle="None"
+        Background="{DynamicResource MainBackgroundBrush}"
+        WindowStartupLocation="CenterScreen">
+
+    <WindowChrome.WindowChrome>
+        <WindowChrome GlassFrameThickness="1" ResizeBorderThickness="5" CaptionHeight="0"/>
+    </WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <!-- Sidebar Nav Item (RadioButton = exclusive active state) -->
+        <Style x:Key="NavItemStyle" TargetType="RadioButton">
+            <Setter Property="GroupName" Value="Nav"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
+            <Setter Property="Height" Value="46"/>
+            <Setter Property="Margin" Value="12,3"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Grid>
+                            <Border x:Name="bg" CornerRadius="12" Background="Transparent"/>
+                            <Border x:Name="bar" Width="4" Height="22" CornerRadius="2" HorizontalAlignment="Left"
+                                    Margin="2,0,0,0" Background="{DynamicResource AccentBrush}" Opacity="0"/>
+                            <ContentPresenter Margin="22,0,12,0" VerticalAlignment="Center"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bg" Property="Background" Value="{DynamicResource SidebarHoverBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="bg" Property="Background" Value="{DynamicResource NavActiveBackgroundBrush}"/>
+                                <Setter TargetName="bar" Property="Opacity" Value="1"/>
+                                <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Titlebar Min/Max Button - Clean hover, theme-aware -->
+        <Style x:Key="TitleBarMinMaxButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+            <Setter Property="FontSize" Value="18"/>
+            <Setter Property="Width" Value="{Binding ActualHeight, RelativeSource={RelativeSource Self}}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="{DynamicResource TitleBarButtonHoverBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Close Button - Red hover, always -->
+        <Style x:Key="CloseBtn" TargetType="Button" BasedOn="{StaticResource TitleBarMinMaxButton}">
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#E81123"/>
+                    <Setter Property="Foreground" Value="White"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+
+    <Border x:Name="RootBorder" Padding="0" Background="{DynamicResource MainBackgroundBrush}">
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="220"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="52"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <!-- SIDEBAR (full height) -->
+            <Border Grid.Column="0" Grid.RowSpan="2" Background="{DynamicResource SidebarBackgroundBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,1,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Brand -->
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="18,18,12,22"
+                                MouseLeftButtonDown="OnWindowHeaderMouseDown">
+                        <Image Source="/Assets/logo.png" Width="38" Height="38" VerticalAlignment="Center"/>
+                        <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
+                            <TextBlock Text="Stream Loot" FontSize="17" FontWeight="Bold"
+                                       Foreground="{DynamicResource TextPrimaryBrush}"/>
+                            <TextBlock Text="by Reaxtic" FontSize="11"
+                                       Foreground="{DynamicResource TextMutedBrush}"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- Navigation -->
+                    <StackPanel Grid.Row="1">
+                        <RadioButton Tag="Dashboard" Click="SidebarButton_Click" Style="{StaticResource NavItemStyle}" IsChecked="True">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE80F;" FontSize="16" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                                <TextBlock Text="Dashboard" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton Tag="Inventory" Click="SidebarButton_Click" Style="{StaticResource NavItemStyle}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE71D;" FontSize="16" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                                <TextBlock Text="Inventory" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton Tag="Settings" Click="SidebarButton_Click" Style="{StaticResource NavItemStyle}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE713;" FontSize="16" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                                <TextBlock Text="Settings" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton Tag="Help" Click="SidebarButton_Click" Style="{StaticResource NavItemStyle}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE897;" FontSize="16" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                                <TextBlock Text="Help" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </RadioButton>
+                    </StackPanel>
+
+                    <!-- Footer -->
+                    <StackPanel Grid.Row="2" Margin="22,0,12,18">
+                        <TextBlock Text="{Binding VersionString, StringFormat='v{0}', FallbackValue='v?'}"
+                                   FontSize="11" Foreground="{DynamicResource TextMutedBrush}"/>
+                        <TextBlock Text="MIT • open source" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" Margin="0,2,0,0"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- TOP BAR (draggable) -->
+            <Border Grid.Column="1" Grid.Row="0" Background="{DynamicResource HeaderBackgroundBrush}"
+                    MouseLeftButtonDown="OnWindowHeaderMouseDown">
+                <Grid>
+                    <TextBlock Text="{Binding VersionString, StringFormat='Stream Loot — v{0}', FallbackValue='Stream Loot'}"
+                               VerticalAlignment="Center" Margin="22,0,0,0" FontSize="12"
+                               Foreground="{DynamicResource TextMutedBrush}"/>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Stretch">
+                        <Button Name="Min_Button"        Content="&#x1F5D5;" Height="52" Click="OnMinimizeButtonClicked" Style="{StaticResource TitleBarMinMaxButton}" ToolTip="Minimize"/>
+                        <Button x:Name="Maximize_Button" Content="&#x1F5D6;" Height="52" Click="OnMaximizeButtonClicked" Style="{StaticResource TitleBarMinMaxButton}" ToolTip="Maximize"/>
+                        <Button Name="Close_Button"      Content="&#10006;"  Height="52" Click="OnCloseButtonClicked"    Style="{StaticResource CloseBtn}"            ToolTip="Close"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- MAIN CONTENT -->
+            <Border Grid.Column="1" Grid.Row="1" Background="{DynamicResource MainBackgroundBrush}">
+                <ContentControl x:Name="MainContent"/>
+            </Border>
+
+            <!-- NotifyIcon, that minimizes to system tray -->
+            <tb:TaskbarIcon x:Name="MyNotifyIcon" IconSource="/Assets/logo.png" ToolTipText="Stream Loot by Reaxtic" DataContext="{Binding RelativeSource={RelativeSource AncestorType=Window}}" Visibility="Collapsed">
+                <tb:TaskbarIcon.ContextMenu>
+                    <ContextMenu>
+                        <!--MenuItem with centered icon and text-->
+                        <MenuItem Header="Stream Loot" IsEnabled="False" Foreground="LightGray">
+                            <MenuItem.Icon>
+                                <Canvas Width="24" Height="24" VerticalAlignment="Center" HorizontalAlignment="Center">
+                                    <Image Source="/Assets/logo.png" Width="24" Height="24" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="6, 0"/>
+                                </Canvas>
+                            </MenuItem.Icon>
+                        </MenuItem>
+
+                        <Separator Margin="0"/>
+
+                        <MenuItem x:Name="OpenGithub" Header="Open Github" Command="{Binding OpenGithubCommand}">
+                            <MenuItem.Icon>
+                                <Canvas Width="24" Height="24" VerticalAlignment="Center" HorizontalAlignment="Center">
+                                    <Image Source="/Assets/github.png" Width="24" Height="24" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="6, 0"/>
+                                </Canvas>
+                            </MenuItem.Icon>
+                        </MenuItem>
+
+                        <MenuItem x:Name="MinimizeAndRestore" Header="Minimize" Command="{Binding ToggleWindowCommand}" />
+                        <MenuItem Header="Exit" Command="{Binding CloseCommand}" />
+
+                        <!--Define a style for the ContextMenu-->
+                        <ContextMenu.Resources>
+                            <!--Set background and foreground colors for MenuItems-->
+                            <Style TargetType="MenuItem">
+                                <Setter Property="Background" Value="#353535"/>
+                                <Setter Property="Foreground" Value="White"/>
+                                <Setter Property="FontFamily" Value="Roboto"/>
+                                <Setter Property="FontSize" Value="14"/>
+                                <Setter Property="Padding" Value="10, 6"/>
+                                <Setter Property="BorderThickness" Value="0"/>
+                                <Setter Property="Margin" Value="0,1,0,1"/>
+
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="{x:Type MenuItem}">
+                                            <Border x:Name="templateRoot" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" SnapsToDevicePixels="true">
+                                                <Grid VerticalAlignment="Center">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <ContentPresenter x:Name="Icon" ContentSource="Icon" HorizontalAlignment="Center" Height="16" Width="16" Margin="2,5,5,5" SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}" VerticalAlignment="Center"/>
+                                                    <ContentPresenter ContentSource="Header" Grid.Column="1" Margin="{TemplateBinding Padding}" RecognizesAccessKey="True" SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
+                                                </Grid>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="Icon" Value="{x:Null}">
+                                                    <Setter Property="Visibility" TargetName="Icon" Value="Collapsed"/>
+                                                </Trigger>
+                                                <Trigger Property="IsHighlighted" Value="True">
+                                                    <Setter Property="Background" TargetName="templateRoot" Value="#999999"/>
+                                                </Trigger>
+                                                <Trigger Property="IsEnabled" Value="False">
+                                                    <Setter Property="TextElement.Foreground" TargetName="templateRoot" Value="LightGray"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+
+                            <!--Style for the ContextMenu itself-->
+                            <Style TargetType="ContextMenu">
+                                <Setter Property="Background" Value="#353535"/>
+                                <Setter Property="BorderBrush" Value="Transparent"/>
+                                <Setter Property="BorderThickness" Value="0"/>
+                                <Setter Property="Padding" Value="0"/>
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ContextMenu">
+                                            <Border 
+                                                Background="{TemplateBinding Background}" 
+                                                BorderBrush="{TemplateBinding BorderBrush}" 
+                                                BorderThickness="{TemplateBinding BorderThickness}" 
+                                                CornerRadius="6" 
+                                                SnapsToDevicePixels="True" 
+                                                Padding="10">
+
+                                                <Grid>
+                                                    <ItemsPresenter/>
+                                                </Grid>
+                                            </Border>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+
+                            <!--Style for separators-->
+                            <Style x:Key="{x:Static MenuItem.SeparatorStyleKey}" TargetType="Separator">
+                                <Setter Property="OverridesDefaultStyle" Value="true" />
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="{x:Type Separator}">
+                                            <Border Height="1" Margin="4,4,4,0" Background="LightGray" HorizontalAlignment="Stretch"/>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ContextMenu.Resources>
+                    </ContextMenu>
+                </tb:TaskbarIcon.ContextMenu>
+            </tb:TaskbarIcon>
+        </Grid>
+    </Border>
+</Window>

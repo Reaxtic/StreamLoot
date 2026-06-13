@@ -1,0 +1,69 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>WinExe</OutputType>
+		<TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<UseWPF>true</UseWPF>
+		<UseWindowsForms>true</UseWindowsForms>
+		<ApplicationIcon>Assets\logo.ico</ApplicationIcon>
+		<AssemblyTitle>Stream Loot</AssemblyTitle>
+		<AssemblyName>Stream Loot</AssemblyName>
+		<Version>1.0.18</Version>
+		<AssemblyVersion>1.0.18.0</AssemblyVersion>
+		<FileVersion>1.0.18</FileVersion>
+		<InformationalVersion>1.0.18</InformationalVersion>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<None Remove="Assets\discord.png" />
+		<None Remove="Assets\github.png" />
+		<None Remove="Assets\logo.ico" />
+		<None Remove="Assets\logo.png" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Content Include="Assets\logo.ico" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Resource Include="Assets\discord.png">
+			<CopyToOutputDirectory>Never</CopyToOutputDirectory>
+		</Resource>
+		<Resource Include="Assets\github.png">
+			<CopyToOutputDirectory>Never</CopyToOutputDirectory>
+		</Resource>
+		<Resource Include="Assets\logo.ico">
+			<CopyToOutputDirectory>Never</CopyToOutputDirectory>
+		</Resource>
+		<Resource Include="Assets\logo.png">
+			<CopyToOutputDirectory>Never</CopyToOutputDirectory>
+		</Resource>
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Include="bin\Release\net10.0-windows10.0.17763.0\publish\win-x64\**" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Compile Remove="bin\Release\net10.0-windows10.0.17763.0\publish\win-x64\Stream Loot.exe.WebView2\**" />
+		<Compile Remove="Windows\**" />
+		<EmbeddedResource Remove="bin\Release\net10.0-windows10.0.17763.0\publish\win-x64\Stream Loot.exe.WebView2\**" />
+		<EmbeddedResource Remove="Windows\**" />
+		<None Remove="bin\Release\net10.0-windows10.0.17763.0\publish\win-x64\Stream Loot.exe.WebView2\**" />
+		<None Remove="Windows\**" />
+		<Page Remove="bin\Release\net10.0-windows10.0.17763.0\publish\win-x64\Stream Loot.exe.WebView2\**" />
+		<Page Remove="Windows\**" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Hardcodet.NotifyIcon.Wpf" Version="2.0.1" />
+		<PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3856.49" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\Core\Core.csproj" />
+	</ItemGroup>
+
+</Project>

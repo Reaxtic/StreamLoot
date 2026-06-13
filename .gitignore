@@ -1,0 +1,18 @@
+# Default Visual Studio stuff
+[Bb]in/
+[Oo]bj/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.pdb
+*.cache
+*.log
+*.vs/
+*.vscode/
+*.resharper
+*.ncrunch*
+*.suo
+*.userprefs
+
+# Build output is NOT committed — distribute via GitHub Releases instead.
