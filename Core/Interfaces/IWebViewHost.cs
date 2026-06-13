@@ -114,6 +114,18 @@ namespace Core.Interfaces
         /// was successfully claimed; otherwise, <see langword="false"/>.</returns>
         Task<bool> ClaimKickDropAsync(string campaignId, string rewardId);
         /// <summary>
+        /// Queries Kick's public channel API for the live status of each given channel slug.
+        /// </summary>
+        /// <param name="slugs">The channel slugs to check.</param>
+        /// <param name="timeoutMs">Maximum time, in milliseconds, to wait for all lookups to complete.</param>
+        /// <returns>A JSON object mapping each slug to its current viewer count when live, or -1 when offline/unknown.</returns>
+        Task<string> FetchKickChannelStatusesAsync(IReadOnlyList<string> slugs, int timeoutMs = 9000);
+        /// <summary>
+        /// Fetches the raw Kick drops progress JSON via an in-page fetch (no navigation), so the live display can be
+        /// reconciled to the authoritative server value.
+        /// </summary>
+        Task<string> FetchKickDropsProgressAsync(int timeoutMs = 10000);
+        /// <summary>
         /// Initiates an asynchronous operation to force a refresh of the underlying data or cache.
         /// </summary>
         /// <returns>A task that represents the asynchronous refresh operation.</returns>

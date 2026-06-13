@@ -10,10 +10,10 @@
 		<ApplicationIcon>Assets\logo.ico</ApplicationIcon>
 		<AssemblyTitle>Stream Loot</AssemblyTitle>
 		<AssemblyName>Stream Loot</AssemblyName>
-		<Version>1.0.18</Version>
-		<AssemblyVersion>1.0.18.0</AssemblyVersion>
-		<FileVersion>1.0.18</FileVersion>
-		<InformationalVersion>1.0.18</InformationalVersion>
+		<Version>1.0.1</Version>
+		<AssemblyVersion>1.0.1.0</AssemblyVersion>
+		<FileVersion>1.0.1</FileVersion>
+		<InformationalVersion>1.0.1</InformationalVersion>
 	</PropertyGroup>
 
 	<ItemGroup>

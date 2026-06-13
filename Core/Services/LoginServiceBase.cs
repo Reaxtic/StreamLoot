@@ -47,5 +47,36 @@ namespace Core.Services
             string htmlRaw = await host.ExecuteScriptAsync("document.documentElement.outerHTML;");
             return System.Text.Json.JsonSerializer.Deserialize<string>(htmlRaw) ?? "";
         }
+
+        /// <summary>
+        /// Determines login state from the platform's auth cookie — the authoritative session signal the app
+        /// already uses for every API call. This is deterministic, unlike scraping a single-page app's HTML
+        /// (which races React hydration and intermittently reported a logged-in user as logged out).
+        /// Retries briefly because the cookie store can lag a fresh navigation.
+        /// </summary>
+        protected static async Task<bool> IsLoggedInByCookieAsync(IWebViewHost host, string url, string cookieName, int attempts = 4)
+        {
+            for (int i = 0; i < attempts; i++)
+            {
+                try
+                {
+                    string? value = await host.GetCookieValueAsync(url, cookieName);
+                    if (!string.IsNullOrWhiteSpace(value))
+                        return true;
+                }
+                catch
+                {
+                    // Cookie store may not be ready immediately after navigation; fall through and retry.
+                }
+
+                if (i < attempts - 1)
+                {
+                    try { await host.WaitForNetworkIdleAsync(2500, 500); }
+                    catch { await Task.Delay(700); }
+                }
+            }
+
+            return false;
+        }
     }
 }

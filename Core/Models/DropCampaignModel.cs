@@ -5,6 +5,22 @@ namespace Core.Models
     /// <summary>A single drop/reward shown in the Dashboard "also earning" list, with its own progress.</summary>
     public sealed record CoMiningDrop(string Name, string? ImageUrl, int Percent);
 
+    /// <summary>A pickable channel for the current campaign (used by the Dashboard channel list).</summary>
+    public sealed record ChannelCandidate(string Login, string Url, bool Online, int Viewers = 0);
+
+    /// <summary>Whether a campaign currently has streamers you can watch to earn it.</summary>
+    public enum CampaignAvailability
+    {
+        /// <summary>Not yet checked.</summary>
+        Unknown,
+        /// <summary>At least one of the campaign's listed channels is live now.</summary>
+        Available,
+        /// <summary>None of the campaign's listed channels are live right now.</summary>
+        Unavailable,
+        /// <summary>General/category drop — earnable on any live channel of the game, so effectively always available.</summary>
+        Category
+    }
+
     /// <summary>
     /// Lightweight view of a campaign that is progressing alongside the watched one on the same channel
     /// (e.g. a general drop earned simultaneously). Broken down into its individual drops so each shows
@@ -65,5 +81,8 @@ namespace Core.Models
         Platform Platform,
         IReadOnlyList<string> ConnectUrls,
         bool IsGeneralDrop,
-        bool IsCurrentCampaign = false);
+        bool IsCurrentCampaign = false,
+        CampaignAvailability Availability = CampaignAvailability.Unknown,
+        int OnlineChannels = 0,
+        bool IsPinned = false);
 }

@@ -749,6 +749,60 @@ namespace UI.Views
         /// <param name="rewardId">The unique identifier of the reward drop to claim within the specified campaign.</param>
         /// <returns>A task that represents the asynchronous operation. The task result is <see langword="true"/> if the drop was
         /// successfully claimed; otherwise, <see langword="false"/>.</returns>
+        /// <summary>
+        /// Fetches the raw Kick drops progress JSON (web.kick.com/api/v1/drops/progress) via an in-page fetch, so
+        /// the live display can be reconciled to the server value without navigating/reloading the watched stream.
+        /// </summary>
+        public async Task<string> FetchKickDropsProgressAsync(int timeoutMs = 10000)
+        {
+            string? encodedToken = await GetCookieValueAsync("https://kick.com", "session_token");
+            if (string.IsNullOrEmpty(encodedToken))
+                return "";
+
+            string bearerToken = Uri.UnescapeDataString(encodedToken);
+            TaskCompletionSource<string> tcs = new TaskCompletionSource<string>();
+
+            void Handler(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+            {
+                string message = e.TryGetWebMessageAsString() ?? "";
+                if (message.StartsWith("KICKPROGRESS:", StringComparison.Ordinal))
+                {
+                    tcs.TrySetResult(message.Substring("KICKPROGRESS:".Length));
+                    WebView.CoreWebView2.WebMessageReceived -= Handler;
+                }
+            }
+
+            WebView.CoreWebView2.WebMessageReceived += Handler;
+            try
+            {
+                string script = $@"
+                    (async () => {{
+                        try {{
+                            const r = await fetch('https://web.kick.com/api/v1/drops/progress', {{
+                                credentials: 'include',
+                                headers: {{ 'Accept': 'application/json', 'Authorization': 'Bearer {bearerToken}' }}
+                            }});
+                            const t = await r.text();
+                            window.chrome.webview.postMessage('KICKPROGRESS:' + t);
+                        }} catch (err) {{
+                            window.chrome.webview.postMessage('KICKPROGRESS:');
+                        }}
+                    }})();
+                ";
+                await WebView.CoreWebView2.ExecuteScriptAsync(script);
+                return await Task.WhenAny(tcs.Task, Task.Delay(timeoutMs)) == tcs.Task ? await tcs.Task : "";
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("KickProgress", $"Progress fetch failed: {ex.Message}");
+                return "";
+            }
+            finally
+            {
+                WebView.CoreWebView2.WebMessageReceived -= Handler;
+            }
+        }
+
         public async Task<bool> ClaimKickDropAsync(string campaignId, string rewardId)
         {
             string? encodedToken = await GetCookieValueAsync("https://kick.com", "session_token");
@@ -847,6 +901,76 @@ namespace UI.Views
             finally
             {
                 // Clean up handler in case of exception/timeout
+                WebView.CoreWebView2.WebMessageReceived -= MessageReceivedHandler;
+            }
+        }
+        /// <summary>
+        /// Queries Kick's public channel API for the live status of each given channel slug.
+        /// Runs an async fetch in the page and returns the result via postMessage (ExecuteScript cannot await promises).
+        /// </summary>
+        public async Task<string> FetchKickChannelStatusesAsync(IReadOnlyList<string> slugs, int timeoutMs = 9000)
+        {
+            if (slugs == null || slugs.Count == 0)
+            {
+                return "{}";
+            }
+
+            TaskCompletionSource<string> tcs = new TaskCompletionSource<string>();
+
+            void MessageReceivedHandler(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+            {
+                string message = e.TryGetWebMessageAsString() ?? "";
+                if (message.StartsWith("KICKSTATUS:", StringComparison.Ordinal))
+                {
+                    tcs.TrySetResult(message.Substring("KICKSTATUS:".Length));
+                    WebView.CoreWebView2.WebMessageReceived -= MessageReceivedHandler;
+                }
+            }
+
+            WebView.CoreWebView2.WebMessageReceived += MessageReceivedHandler;
+
+            try
+            {
+                string slugsJson = System.Text.Json.JsonSerializer.Serialize(slugs);
+                string script = $@"
+                    (async () => {{
+                        const slugs = {slugsJson};
+                        const out = {{}};
+                        await Promise.all(slugs.map(async (s) => {{
+                            try {{
+                                const r = await fetch('https://kick.com/api/v2/channels/' + encodeURIComponent(s), {{
+                                    credentials: 'include',
+                                    headers: {{ 'Accept': 'application/json' }}
+                                }});
+                                if (r.ok) {{
+                                    const j = await r.json();
+                                    out[s] = (j && j.livestream) ? (j.livestream.viewer_count ?? 0) : -1;
+                                }} else {{
+                                    out[s] = -1;
+                                }}
+                            }} catch (err) {{
+                                out[s] = -1;
+                            }}
+                        }}));
+                        window.chrome.webview.postMessage('KICKSTATUS:' + JSON.stringify(out));
+                    }})();
+                ";
+
+                await WebView.CoreWebView2.ExecuteScriptAsync(script);
+
+                string rawResult = await Task.WhenAny(tcs.Task, Task.Delay(timeoutMs)) == tcs.Task
+                    ? await tcs.Task
+                    : "{}";
+
+                return string.IsNullOrWhiteSpace(rawResult) ? "{}" : rawResult;
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("KickChannels", $"Channel status fetch failed: {ex.Message}");
+                return "{}";
+            }
+            finally
+            {
                 WebView.CoreWebView2.WebMessageReceived -= MessageReceivedHandler;
             }
         }

@@ -15,6 +15,7 @@ namespace UI.Views
 
         private async void Initialize()
         {
+            // Keep the genuine WebView2 User-Agent (overriding it caused Twitch to flag the browser as unsupported).
             await Web.EnsureCoreWebView2Async();
 
             Web.Source = new Uri("https://kick.com");

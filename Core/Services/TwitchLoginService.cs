@@ -32,8 +32,8 @@ namespace Core.Services
 
             UpdateStatus(ConnectionStatus.Validating);
 
-            string html = await GetPageHtmlAsync(host);
-            bool isLoggedIn = !html.Contains("data-a-target=\"login-button\"", StringComparison.OrdinalIgnoreCase);
+            // The auth-token cookie is the authoritative session signal (the GQL service reads it for every call).
+            bool isLoggedIn = await IsLoggedInByCookieAsync(host, "https://twitch.tv", "auth-token");
 
             AppLogger.Info("TwitchLogin", $"Credential validation completed. isLoggedIn={isLoggedIn}");
 

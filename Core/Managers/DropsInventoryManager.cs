@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Core.Interfaces;
 using System.Windows;
 using System.Timers;
@@ -51,10 +52,19 @@ namespace Core.Managers
         private bool _lastKnownKickOnlineState;
         private bool _lastKnownTwitchOnlineState;
 
+        // Live online state from the most recent health check (updated every 30s, set true at selection). The
+        // optimistic per-minute tick only advances while this is true, so a bar can't keep climbing after the
+        // watched streamer goes offline (which earns nothing on the server).
+        private volatile bool _twitchCurrentlyOnline;
+        private volatile bool _kickCurrentlyOnline;
+
         // Timer for live ticking
         private readonly System.Timers.Timer _liveProgressTimer = new(1000);
         private System.Timers.Timer? _recheckTimer;
         private System.Timers.Timer? _streamHealthTimer;
+        // Sends a "minute-watched" event to Twitch every minute so drop watch time is credited server-side via the
+        // analytics endpoint (the DevilXD approach), instead of relying on the hidden player which Twitch throttles.
+        private readonly System.Timers.Timer _twitchWatchTimer = new(60 * 1000);
 
         private int _twitchAppliedMinuteBucket;
         private int _kickAppliedMinuteBucket;
@@ -69,8 +79,30 @@ namespace Core.Managers
         // Manual user overrides.
         private string? _forcedCampaignId; // when set, selection mines this campaign instead of auto-picking
         private string? _currentKickLogin; // login of the Kick streamer currently being watched
+
+        // Campaigns whose SERVER progress stays frozen while we watch them (i.e. not actually crediting — e.g. an
+        // R6S drop with a broken Ubisoft link). They get deprioritised in auto-selection so the miner moves to a
+        // campaign that really credits. Reset on every full campaign refresh so they're periodically retried.
+        private readonly object _creditSync = new();
+        private readonly HashSet<string> _notCreditingCampaignIds = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, (int Minutes, int FrozenCount)> _creditTracking = new(StringComparer.Ordinal);
+        // Channels (logins) whose server progress froze while watched — they earn nothing right now (e.g. a 24/7
+        // rerun, or a channel that stopped running the campaign's drops). Avoided when picking a streamer so the
+        // miner rotates to a fresh live channel of the SAME campaign instead of returning to the dead one.
+        private readonly HashSet<string> _stalledTwitchLogins = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _stalledKickLogins = new(StringComparer.OrdinalIgnoreCase);
+        private DateTime _lastCreditMarksCleared = DateTime.Now;
         private readonly HashSet<string> _skipTwitchLogins = new(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _skipKickLogins = new(StringComparer.OrdinalIgnoreCase);
+        // A channel the user explicitly picked (e.g. from the Dashboard channel list). It is watched directly,
+        // bypassing the live/category gate, so an explicit pick is never silently swapped back to another channel.
+        // Tuple: (campaign id the pick is for, full channel URL). Consumed on the next selection for that campaign.
+        private (string CampaignId, string Url)? _forcedTwitchStreamer;
+        private (string CampaignId, string Url)? _forcedKickStreamer;
+        // True when the most recent selection used an explicit user pick; lets the post-navigation eligibility
+        // gate skip the fragile DOM category check (but still respect the online check) for that pick.
+        private bool _twitchSelectionForced;
+        private bool _kickSelectionForced;
         public string? ForcedCampaignId => _forcedCampaignId;
         private readonly object _campaignSnapshotSync = new();
         private List<DropsCampaign> _lastKnownCampaigns = new();
@@ -79,6 +111,46 @@ namespace Core.Managers
             Environment.ExpandEnvironmentVariables("%APPDATA%"),
             "Stream Loot",
             "LastWatchedStreamers.json");
+
+        // Persisted "Mine this" pin so the chosen campaign keeps being mined across restarts.
+        private static readonly string _forcedCampaignFilePath = Path.Combine(
+            Environment.ExpandEnvironmentVariables("%APPDATA%"),
+            "Stream Loot",
+            "ForcedCampaign.txt");
+
+        private static void SaveForcedCampaignId(string? campaignId)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(campaignId))
+                {
+                    if (File.Exists(_forcedCampaignFilePath)) File.Delete(_forcedCampaignFilePath);
+                }
+                else
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(_forcedCampaignFilePath)!);
+                    File.WriteAllText(_forcedCampaignFilePath, campaignId);
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("Selection", $"Failed to persist forced campaign: {ex.Message}");
+            }
+        }
+
+        private static string? LoadForcedCampaignId()
+        {
+            try
+            {
+                if (File.Exists(_forcedCampaignFilePath))
+                {
+                    string v = File.ReadAllText(_forcedCampaignFilePath).Trim();
+                    return string.IsNullOrWhiteSpace(v) ? null : v;
+                }
+            }
+            catch { }
+            return null;
+        }
 
         private static bool IsVerboseDebugEnabled => UISettingsManager.Instance.VerboseDebugLogging;
 
@@ -102,11 +174,34 @@ namespace Core.Managers
         private DropsInventoryManager()
         {
             LoadLastWatchedStreamers();
+            _forcedCampaignId = LoadForcedCampaignId(); // restore a "Mine this" pin across restarts
             UISettingsManager.Instance.MiningPriorityModeChanged += OnMiningPriorityModeChanged;
             UISettingsManager.Instance.GameWhitelistChanged += OnGameWhitelistChanged;
 
             _liveProgressTimer.Elapsed += OnLiveProgressTick;
             _liveProgressTimer.AutoReset = true;
+
+            _twitchWatchTimer.Elapsed += OnTwitchWatchHeartbeat;
+            _twitchWatchTimer.AutoReset = true;
+            _twitchWatchTimer.Start();
+        }
+
+        /// <summary>
+        /// Every minute, registers a "minute-watched" event with Twitch for the current channel so drop progress is
+        /// credited server-side regardless of whether the hidden player is actually decoding video.
+        /// </summary>
+        private async void OnTwitchWatchHeartbeat(object? sender, ElapsedEventArgs e)
+        {
+            try
+            {
+                string? login = _currentTwitchLogin;
+                if (!_isPaused && _twitchGqlService != null && !string.IsNullOrWhiteSpace(login))
+                    await _twitchGqlService.SendWatchHeartbeatAsync(login!);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("TwitchWatch", $"Heartbeat tick failed: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -336,7 +431,7 @@ namespace Core.Managers
         private void OnLiveProgressTick(object? sender, ElapsedEventArgs e)
         {
             DropsCampaign? currentTwitchCampaign = _currentTwitchCampaign;
-            if (currentTwitchCampaign != null)
+            if (currentTwitchCampaign != null && _twitchCurrentlyOnline)
             {
                 _twitchWatchedSeconds++;
                 _twitchDropWatchedSeconds++;
@@ -365,7 +460,7 @@ namespace Core.Managers
             }
 
             DropsCampaign? currentKickCampaign = _currentKickCampaign;
-            if (currentKickCampaign != null)
+            if (currentKickCampaign != null && _kickCurrentlyOnline)
             {
                 _kickWatchedSeconds++;
                 _kickDropWatchedSeconds++;
@@ -421,6 +516,9 @@ namespace Core.Managers
         /// </summary>
         private static DropsCampaign MergeCampaignProgress(DropsCampaign fresh, DropsCampaign previous)
         {
+            // Availability is computed client-side (not part of the server snapshot), so carry it across reloads.
+            fresh = fresh with { Availability = previous.Availability, OnlineChannels = previous.OnlineChannels };
+
             bool freshHasData = fresh.Rewards.Any(r => r.ProgressMinutes > 0 || r.IsClaimed);
             if (freshHasData)
                 return fresh; // trust the server snapshot entirely
@@ -454,7 +552,20 @@ namespace Core.Managers
             _twitchGqlService = twitchGqlService;
             List<DropsCampaign> allCampaigns = campaigns.ToList();
 
-            // Fresh server data arrived — previously failed (premature) claims may now be retried.
+            // Give "not crediting" campaigns another chance only occasionally (~hourly) — NOT on every 20-min
+            // refresh, otherwise a permanently-stuck campaign (e.g. R6S with a broken Ubisoft link) kept coming
+            // back, getting re-selected, watched ~6 min, re-flagged, and switched off — looking like a reset.
+            lock (_creditSync)
+            {
+                if ((DateTime.Now - _lastCreditMarksCleared) > TimeSpan.FromMinutes(60))
+                {
+                    _notCreditingCampaignIds.Clear();
+                    _creditTracking.Clear();
+                    _stalledTwitchLogins.Clear();
+                    _stalledKickLogins.Clear();
+                    _lastCreditMarksCleared = DateTime.Now;
+                }
+            }
             lock (_failedClaimRewardIds)
             {
                 _failedClaimRewardIds.Clear();
@@ -489,6 +600,13 @@ namespace Core.Managers
                     ActiveCampaigns.Add(toAdd);
                 }
 
+                // Keep the "currently watched" references pointing at the freshly-rebuilt objects so a platform
+                // that isn't being re-selected (scoped restart) keeps a valid reference for the live timer/UI.
+                if (_currentTwitchCampaign != null)
+                    _currentTwitchCampaign = ActiveCampaigns.FirstOrDefault(c => c.Id == _currentTwitchCampaign.Id) ?? _currentTwitchCampaign;
+                if (_currentKickCampaign != null)
+                    _currentKickCampaign = ActiveCampaigns.FirstOrDefault(c => c.Id == _currentKickCampaign.Id) ?? _currentKickCampaign;
+
                 UpdateCurrentSelectionFlags();
             });
 
@@ -513,13 +631,15 @@ namespace Core.Managers
         /// <summary>
         /// Resumes stream watching if it was previously paused.
         /// </summary>
-        public async Task ResumeWatchingAsync()
+        public async Task ResumeWatchingAsync(Platform? onlyPlatform = null)
         {
             if (!_isPaused)
                 return;
 
             _isPaused = false;
-            await StartWatchingStreams();
+            // Scope the restart so connecting/refreshing one platform doesn't re-select (reset) the other,
+            // which is still mining. The skipped platform keeps its current stream and baseline.
+            await StartWatchingStreams(restartedInternally: false, onlyPlatform: onlyPlatform);
         }
 
         // === Manual user overrides (driven from the UI) ===
@@ -530,7 +650,9 @@ namespace Core.Managers
         /// </summary>
         public async Task SetForcedCampaignAsync(string? campaignId)
         {
+            string? previousForcedId = _forcedCampaignId;
             _forcedCampaignId = string.IsNullOrWhiteSpace(campaignId) ? null : campaignId;
+            SaveForcedCampaignId(_forcedCampaignId); // persist so the pin survives a restart
             AppLogger.Info("Selection", _forcedCampaignId == null
                 ? "Cleared forced campaign; back to automatic selection."
                 : $"User forced campaign id={_forcedCampaignId}.");
@@ -541,10 +663,14 @@ namespace Core.Managers
                 _skipKickLogins.Clear();
             }
 
-            // Re-evaluate only the platform of the pinned campaign (so the other platform keeps mining).
-            Platform? scope = _forcedCampaignId == null
+            UpdateCurrentSelectionFlags(); // reflect the pin (IsPinned badge / Unpin button) immediately
+
+            // Re-evaluate ONLY the platform involved (the campaign being pinned, or the one being unpinned), so the
+            // OTHER platform keeps mining undisturbed — pinning a Twitch campaign must not reset Kick, and vice versa.
+            string? relevantId = _forcedCampaignId ?? previousForcedId;
+            Platform? scope = string.IsNullOrWhiteSpace(relevantId)
                 ? null
-                : ActiveCampaigns.FirstOrDefault(c => c.Id == _forcedCampaignId)?.Platform;
+                : ActiveCampaigns.FirstOrDefault(c => c.Id == relevantId)?.Platform;
 
             if (!_isPaused)
                 await StartWatchingStreams(true, scope);
@@ -589,9 +715,24 @@ namespace Core.Managers
             string url = NormalizeStreamerUrl(platform, streamerUrlOrName.Trim());
             string login = GetStreamerNameFromUrl(url);
 
+            // Already watching this exact channel: nothing to do. Avoids a pointless re-navigation that
+            // would briefly reset the on-screen progress to 0 (e.g. clicking the channel you're already on).
+            string? currentLogin = platform == Platform.Twitch ? _currentTwitchLogin : _currentKickLogin;
+            if (!string.IsNullOrWhiteSpace(currentLogin) && string.Equals(currentLogin, login, StringComparison.OrdinalIgnoreCase))
+            {
+                AppLogger.Info("Selection", $"Preferred {platform} streamer '{login}' is already being watched; skipping restart.");
+                return;
+            }
+
             lock (_lastStreamerSync)
             {
                 (platform == Platform.Twitch ? _skipTwitchLogins : _skipKickLogins).Remove(login);
+
+                // Mark it as an explicit user pick so selection watches it directly (no live/category gate).
+                if (platform == Platform.Twitch)
+                    _forcedTwitchStreamer = (campaign.Id, url);
+                else
+                    _forcedKickStreamer = (campaign.Id, url);
             }
 
             RememberLastStreamerUrl(platform, campaign.Id, url);
@@ -689,7 +830,319 @@ namespace Core.Managers
             if (c.Platform != watched.Platform || c.Id == watched.Id || !IsSameGame(c, watched))
                 return false;
 
-            return c.IsGeneralDrop || (!string.IsNullOrWhiteSpace(login) && ChannelIsInCampaign(c, login!));
+            // A campaign that lists specific channels only earns while watching one of THOSE channels — even when
+            // it's flagged "general" (e.g. Kick "Football Drop" tied to a particular streamer). Only a true category
+            // drop (no listed channels) earns on any same-game channel. This stops the co-mining display from adding
+            // fake progress to channel-bound campaigns whose channel you aren't watching.
+            bool hasChannels = CampaignChannelLogins(c).Count > 0;
+            if (c.IsGeneralDrop && !hasChannels)
+                return true;
+
+            return !string.IsNullOrWhiteSpace(login) && ChannelIsInCampaign(c, login!);
+        }
+
+        /// <summary>
+        /// Returns channels you can pick to watch for the campaign currently selected on the platform.
+        /// Twitch: the participating channels confirmed LIVE (and in the right category) via GraphQL.
+        /// Kick: the campaign's participating channels (live status is confirmed once you start watching).
+        /// </summary>
+        public async Task<IReadOnlyList<ChannelCandidate>> GetChannelCandidatesAsync(Platform platform)
+        {
+            DropsCampaign? campaign = platform == Platform.Twitch ? _currentTwitchCampaign : _currentKickCampaign;
+            if (campaign == null)
+                return Array.Empty<ChannelCandidate>();
+
+            // Only real channel URLs ("kick.com/name" / "twitch.tv/name"), not category/browse/directory links.
+            List<string> logins = (campaign.ConnectUrls ?? (IReadOnlyList<string>)Array.Empty<string>())
+                .Where(IsRealChannelUrl)
+                .Select(GetStreamerNameFromUrl)
+                .Where(l => !string.IsNullOrWhiteSpace(l))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (platform == Platform.Twitch)
+            {
+                if (_twitchGqlService == null || string.IsNullOrWhiteSpace(campaign.Slug))
+                    return Array.Empty<ChannelCandidate>();
+
+                try
+                {
+                    // General drops aren't tied to specific channels: list the game directory's live drops-enabled
+                    // channels (with viewer counts). Channel-specific drops: confirm which participating channels are live.
+                    if (logins.Count == 0)
+                    {
+                        List<(string Login, int Viewers)> dir = await _twitchGqlService.QueryLiveDirectoryChannelsAsync(campaign.Slug, 30);
+                        return dir
+                            .Select(d => new ChannelCandidate(d.Login, $"https://www.twitch.tv/{d.Login}", true, d.Viewers))
+                            .ToList();
+                    }
+
+                    // Prefer the variant that also returns viewer counts; fall back to the login-only query
+                    // (shown as a green dot without a number) if the raw query yields nothing.
+                    List<(string Login, int Viewers)> liveWithViewers = await _twitchGqlService.QueryLiveChannelsWithViewersBySlugAsync(logins, campaign.Slug);
+                    if (liveWithViewers.Count != 0)
+                    {
+                        return liveWithViewers
+                            .Select(d => new ChannelCandidate(d.Login, $"https://www.twitch.tv/{d.Login}", true, d.Viewers))
+                            .ToList();
+                    }
+
+                    List<string> live = await _twitchGqlService.QueryLiveChannelsBySlugAsync(logins, campaign.Slug);
+                    return live
+                        .Select(l => new ChannelCandidate(l, $"https://www.twitch.tv/{l}", true))
+                        .ToList();
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn("TwitchSelection", $"Channel candidate lookup failed: {ex.Message}");
+                    return Array.Empty<ChannelCandidate>();
+                }
+            }
+
+            // Kick: participating channels, with live/online status (and viewer count) from Kick's channel API.
+            List<string> kickSlugs = logins.Take(30).ToList();
+            if (kickSlugs.Count == 0)
+                return Array.Empty<ChannelCandidate>();
+
+            Dictionary<string, int> kickStatus = new(StringComparer.OrdinalIgnoreCase);
+            if (KickWebView != null)
+            {
+                try
+                {
+                    string statusJson = await await Application.Current.Dispatcher.InvokeAsync(
+                        async () => await KickWebView!.FetchKickChannelStatusesAsync(kickSlugs));
+
+                    using JsonDocument doc = JsonDocument.Parse(statusJson);
+                    foreach (JsonProperty prop in doc.RootElement.EnumerateObject())
+                    {
+                        if (prop.Value.ValueKind == JsonValueKind.Number)
+                            kickStatus[prop.Name] = prop.Value.GetInt32();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn("KickSelection", $"Channel status lookup failed: {ex.Message}");
+                }
+            }
+
+            return kickSlugs
+                .Select(l =>
+                {
+                    int viewers = kickStatus.TryGetValue(l, out int v) ? v : -1;
+                    return new ChannelCandidate(l, $"https://kick.com/{l}", viewers >= 0, Math.Max(0, viewers));
+                })
+                .OrderByDescending(c => c.Online)
+                .ThenByDescending(c => c.Viewers)
+                .ToList();
+        }
+
+        private static bool IsRealChannelUrl(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+                return false;
+            try
+            {
+                string path = new Uri(url).AbsolutePath.Trim('/');
+                if (string.IsNullOrEmpty(path) || path.Contains('/'))
+                    return false; // multi-segment = category/browse/directory, not a channel
+                return path is not ("category" or "browse" or "directory");
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        // Reserved first-path segments that are never channel names on Twitch/Kick.
+        private static readonly HashSet<string> _nonChannelSegments = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "category", "browse", "directory", "search", "videos", "clips", "video",
+            "following", "subscriptions", "settings", "drops", "u", "popout"
+        };
+
+        /// <summary>
+        /// Reduces a URL like "kick.com/westcol/videos/&lt;id&gt;" (a VOD link the directory scraper sometimes
+        /// returns) to the channel root "kick.com/westcol". Returns false when the first path segment is a
+        /// reserved word (e.g. category/directory), so a category page is never treated as a channel.
+        /// </summary>
+        private static bool TryNormalizeChannelUrl(Platform platform, string? url, out string channelUrl)
+        {
+            channelUrl = string.Empty;
+            if (string.IsNullOrWhiteSpace(url))
+                return false;
+            try
+            {
+                string[] segments = new Uri(url).AbsolutePath.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+                if (segments.Length == 0 || _nonChannelSegments.Contains(segments[0]))
+                    return false;
+
+                string host = platform == Platform.Twitch ? "https://www.twitch.tv" : "https://kick.com";
+                channelUrl = $"{host}/{segments[0]}";
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private readonly SemaphoreSlim _availabilityLock = new(1, 1);
+        private DateTime _lastAvailabilityRefresh = DateTime.MinValue;
+
+        private List<string> CampaignChannelLogins(DropsCampaign c) =>
+            (c.ConnectUrls ?? (IReadOnlyList<string>)Array.Empty<string>())
+                .Where(IsRealChannelUrl)
+                .Select(GetStreamerNameFromUrl)
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+        /// <summary>
+        /// Computes, for every active campaign, whether watchable streamers are currently live (so the Inventory
+        /// can mark availability). General/category drops are marked <see cref="CampaignAvailability.Category"/>
+        /// (earnable on any live channel of the game). Channel-specific drops are checked against their listed
+        /// channels: Kick via its channel API (one batched lookup), Twitch via the persisted live-streams query.
+        /// Throttled to once every 2 minutes unless forced. Does not affect mining selection.
+        /// </summary>
+        public async Task RefreshAvailabilityAsync(bool force = false)
+        {
+            if (!force && (DateTime.Now - _lastAvailabilityRefresh) < TimeSpan.FromMinutes(2))
+                return;
+
+            if (!await _availabilityLock.WaitAsync(0))
+                return; // a refresh is already running
+
+            try
+            {
+                List<DropsCampaign> snapshot = await Application.Current.Dispatcher.InvokeAsync(() => ActiveCampaigns.ToList());
+                Dictionary<string, (CampaignAvailability State, int Online)> result = new(StringComparer.Ordinal);
+
+                // Kick channel-specific: one batched status lookup for the union of all participating channels.
+                Dictionary<string, int> kickStatus = new(StringComparer.OrdinalIgnoreCase);
+                List<string> kickSlugs = snapshot
+                    .Where(c => c.Platform == Platform.Kick)
+                    .SelectMany(CampaignChannelLogins) // empty for true category drops; non-empty even if flagged "general"
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(60)
+                    .ToList();
+
+                if (kickSlugs.Count != 0 && KickWebView != null)
+                {
+                    try
+                    {
+                        string json = await await Application.Current.Dispatcher.InvokeAsync(
+                            async () => await KickWebView!.FetchKickChannelStatusesAsync(kickSlugs, 12000));
+                        using JsonDocument doc = JsonDocument.Parse(json);
+                        foreach (JsonProperty p in doc.RootElement.EnumerateObject())
+                            if (p.Value.ValueKind == JsonValueKind.Number)
+                                kickStatus[p.Name] = p.Value.GetInt32();
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Warn("Availability", $"Kick status batch failed: {ex.Message}");
+                    }
+                }
+
+                void ApplyResults()
+                {
+                    Application.Current.Dispatcher.Invoke(() =>
+                    {
+                        for (int i = 0; i < ActiveCampaigns.Count; i++)
+                        {
+                            DropsCampaign c = ActiveCampaigns[i];
+                            (CampaignAvailability State, int Online) info;
+                            lock (result)
+                            {
+                                if (!result.TryGetValue(c.Id, out info))
+                                    continue;
+                            }
+                            if (c.Availability != info.State || c.OnlineChannels != info.Online)
+                                ActiveCampaigns[i] = c with { Availability = info.State, OnlineChannels = info.Online };
+                        }
+                    });
+                }
+
+                // Phase 1 — instant: general/category drops and Kick channel-specific (from the batched lookup).
+                List<DropsCampaign> twitchToCheck = new();         // channel-specific (check listed channels)
+                List<DropsCampaign> twitchGeneralToCheck = new();  // general (check the game directory)
+                foreach (DropsCampaign c in snapshot)
+                {
+                    // Check real channels whenever the campaign has them — even when flagged "general", since some
+                    // (e.g. Kick "Football Drop") are actually tied to specific channels. Only true category drops
+                    // (no real channels) are marked Category.
+                    List<string> chans = CampaignChannelLogins(c);
+
+                    if (chans.Count == 0)
+                    {
+                        lock (result) result[c.Id] = (CampaignAvailability.Category, 0);
+                        // For true Twitch general drops, try to upgrade to a live count from the game directory.
+                        if (c.Platform == Platform.Twitch && _twitchGqlService != null && !string.IsNullOrWhiteSpace(c.Slug))
+                            twitchGeneralToCheck.Add(c);
+                    }
+                    else if (c.Platform == Platform.Kick)
+                    {
+                        int online = chans.Count(ch => kickStatus.TryGetValue(ch, out int v) && v >= 0);
+                        lock (result) result[c.Id] = (online > 0 ? CampaignAvailability.Available : CampaignAvailability.Unavailable, online);
+                    }
+                    else if (_twitchGqlService != null && !string.IsNullOrWhiteSpace(c.Slug))
+                    {
+                        twitchToCheck.Add(c);
+                    }
+                    else
+                    {
+                        lock (result) result[c.Id] = (CampaignAvailability.Unknown, 0);
+                    }
+                }
+                ApplyResults();
+
+                // Phase 2 — Twitch channel-specific, checked in parallel (capped) so badges fill in quickly.
+                using (SemaphoreSlim gate = new SemaphoreSlim(5))
+                {
+                    await Task.WhenAll(twitchToCheck.Select(async c =>
+                    {
+                        await gate.WaitAsync();
+                        try
+                        {
+                            List<(string Login, int Viewers)> live = await _twitchGqlService!
+                                .QueryLiveChannelsWithViewersBySlugAsync(CampaignChannelLogins(c).Take(30).ToList(), c.Slug);
+                            lock (result) result[c.Id] = (live.Count > 0 ? CampaignAvailability.Available : CampaignAvailability.Unavailable, live.Count);
+                        }
+                        catch (Exception ex)
+                        {
+                            AppLogger.Warn("Availability", $"Twitch live check failed for '{c.Name}': {ex.Message}");
+                            lock (result) result[c.Id] = (CampaignAvailability.Unknown, 0);
+                        }
+                        finally { gate.Release(); }
+                    }));
+
+                    // Twitch general drops: upgrade "Category drop" to a live count from the game directory when
+                    // available. On any failure we leave the Category label (the directory query is best-effort).
+                    await Task.WhenAll(twitchGeneralToCheck.Select(async c =>
+                    {
+                        await gate.WaitAsync();
+                        try
+                        {
+                            List<(string Login, int Viewers)> live = await _twitchGqlService!
+                                .QueryLiveDirectoryChannelsAsync(c.Slug, 30);
+                            if (live.Count > 0)
+                                lock (result) result[c.Id] = (CampaignAvailability.Available, live.Count);
+                        }
+                        catch (Exception ex)
+                        {
+                            AppLogger.Warn("Availability", $"Twitch directory check failed for '{c.Name}': {ex.Message}");
+                        }
+                        finally { gate.Release(); }
+                    }));
+                }
+                ApplyResults();
+
+                _lastAvailabilityRefresh = DateTime.Now;
+                AppLogger.Info("Availability", $"Availability refreshed for {result.Count} campaigns.");
+            }
+            finally
+            {
+                _availabilityLock.Release();
+            }
         }
 
         /// <summary>
@@ -1069,10 +1522,83 @@ namespace Core.Managers
                     if (token.IsCancellationRequested)
                         return;
 
-                    List<DropsCampaign> remainingTwitchCampaigns = [.. twitchCampaigns];
+                    // Keep the current Twitch stream through a routine refresh instead of re-navigating it (which
+                    // briefly resets the card). Progress stays accurate via the 3-min server reconcile. Only kept
+                    // when the same campaign is still eligible and the user hasn't just forced a specific channel.
+                    bool keepTwitch = false;
+                    {
+                        bool forcedPending;
+                        lock (_lastStreamerSync) { forcedPending = _forcedTwitchStreamer != null; }
+                        // Don't keep the current campaign if the user pinned a DIFFERENT one via "Mine this".
+                        bool forcedToOther = !string.IsNullOrWhiteSpace(_forcedCampaignId)
+                            && !string.Equals(_forcedCampaignId, _currentTwitchCampaign?.Id, StringComparison.Ordinal);
+
+                        // Don't keep a campaign that was flagged as not actually crediting (server frozen while
+                        // watched) — otherwise keep-current would silently re-pin it and the auto stall-skip never
+                        // takes effect (the miner would sit on e.g. a broken-Ubisoft-link R6S campaign forever).
+                        bool currentNotCrediting = IsNotCrediting(_currentTwitchCampaign?.Id)
+                            || IsChannelStalled(Platform.Twitch, _currentTwitchLogin);
+
+                        DropsCampaign? fresh = _currentTwitchCampaign == null ? null : twitchCampaigns.FirstOrDefault(c => c.Id == _currentTwitchCampaign.Id);
+                        if (!forcedPending && !forcedToOther && !currentNotCrediting && fresh != null && !string.IsNullOrWhiteSpace(_currentTwitchLogin)
+                            && fresh.HasProgressToMake()
+                            && await IsTwitchStreamEligibleViaGqlAsync(_currentTwitchLogin, fresh.Slug) == true)
+                        {
+                            _currentTwitchCampaign = fresh;
+                            _lastKnownTwitchOnlineState = true;
+                            _twitchCurrentlyOnline = true;
+                            UpdateCurrentSelectionFlags();
+
+                            _twitchWatchedSeconds = fresh.Rewards.Sum(r => Math.Min(r.ProgressMinutes, r.RequiredMinutes) * 60);
+                            DropsReward? nextR = fresh.Rewards.Where(r => !r.IsClaimed).OrderBy(r => r.RequiredMinutes).FirstOrDefault();
+                            int beforeNext = fresh.Rewards.Where(r => !r.IsClaimed && r.RequiredMinutes < (nextR?.RequiredMinutes ?? 0)).Sum(r => r.RequiredMinutes);
+                            _twitchDropWatchedSeconds = Math.Max(0, (nextR?.ProgressMinutes ?? 0) - beforeNext) * 60;
+                            _twitchAppliedMinuteBucket = _twitchWatchedSeconds / 60;
+
+                            DropsReward? soonest = fresh.Rewards.Where(r => !r.IsClaimed && r.ProgressMinutes < r.RequiredMinutes).OrderBy(r => r.RequiredMinutes - r.ProgressMinutes).FirstOrDefault();
+                            if (soonest != null)
+                            {
+                                DateTime est = DateTime.Now.AddMinutes(soonest.RequiredMinutes - soonest.ProgressMinutes);
+                                if (est < nextCheckAt) { nextCheckAt = est; nextCheckPlatform = Platform.Twitch; }
+                            }
+
+                            TwitchProgressChanged?.Invoke(CalculateLiveCampaignProgress(fresh), CalculateLiveDropProgress(fresh, _twitchDropWatchedSeconds));
+                            RaiseTwitchDropChangedIfNeeded(nextR);
+                            AppLogger.Info("TwitchSelection", $"Kept current Twitch stream '{_currentTwitchLogin}' through refresh (no re-navigation).");
+                            keepTwitch = true;
+                        }
+                    }
+
+                    // If the user pinned a Twitch campaign via "Mine this", consider ONLY that campaign here. If its
+                    // channels are all offline, Twitch goes idle and waits for one to come live (idle-retry) instead
+                    // of wandering off to a different campaign the user didn't ask for.
+                    List<DropsCampaign> remainingTwitchCampaigns;
+                    if (keepTwitch)
+                        remainingTwitchCampaigns = new List<DropsCampaign>();
+                    else if (!string.IsNullOrWhiteSpace(_forcedCampaignId) && twitchCampaigns.Any(c => c.Id == _forcedCampaignId))
+                        remainingTwitchCampaigns = twitchCampaigns.Where(c => c.Id == _forcedCampaignId).ToList();
+                    else
+                        remainingTwitchCampaigns = [.. twitchCampaigns];
+
                     while (remainingTwitchCampaigns.Count != 0)
                     {
-                        DropsCampaign? bestTwitch = await SelectBestCampaign(remainingTwitchCampaigns);
+                        // If the user just picked a specific channel, select that channel's campaign first so the
+                        // pick isn't lost to a higher-priority campaign that happens to rank above it.
+                        string? forcedTwitchCampId;
+                        lock (_lastStreamerSync) { forcedTwitchCampId = _forcedTwitchStreamer?.CampaignId; }
+
+                        // Sticky selection: a user-forced channel wins; otherwise prefer the campaign we're already
+                        // watching (if it's still a candidate) so we don't needlessly jump to a different campaign
+                        // that merely ranks higher. Only fall back to priority ranking when neither applies.
+                        // A user-forced channel wins; a "Mine this" pinned campaign (handled inside SelectBestCampaign)
+                        // wins next; otherwise stay sticky on the campaign we're already watching; else pick by priority.
+                        bool campaignPinned = !string.IsNullOrWhiteSpace(_forcedCampaignId);
+                        DropsCampaign? bestTwitch =
+                            forcedTwitchCampId != null
+                                ? remainingTwitchCampaigns.FirstOrDefault(c => c.Id == forcedTwitchCampId) ?? await SelectBestCampaign(remainingTwitchCampaigns)
+                            : (!campaignPinned && _currentTwitchCampaign != null && !IsNotCrediting(_currentTwitchCampaign.Id) && remainingTwitchCampaigns.FirstOrDefault(c => c.Id == _currentTwitchCampaign.Id) is { } stickyTwitch)
+                                ? stickyTwitch
+                                : await SelectBestCampaign(remainingTwitchCampaigns);
                         if (bestTwitch == null)
                             break;
 
@@ -1117,9 +1643,11 @@ namespace Core.Managers
                             twitchCorrectCategory = await IsTwitchStreamCategoryCorrect();
                         }
 
-                        if (!twitchOnline || !twitchCorrectCategory)
+                        // An explicit user pick is trusted on category (fragile DOM/GQL category check), but must
+                        // still be actually online to be worth watching.
+                        if (!twitchOnline || (!twitchCorrectCategory && !_twitchSelectionForced))
                         {
-                            AppLogger.Warn("TwitchSelection", $"Twitch campaign '{bestTwitch.Name}' failed streamer eligibility. online={twitchOnline}, categoryOk={twitchCorrectCategory}");
+                            AppLogger.Warn("TwitchSelection", $"Twitch campaign '{bestTwitch.Name}' failed streamer eligibility. online={twitchOnline}, categoryOk={twitchCorrectCategory}, forced={_twitchSelectionForced}");
                             _currentTwitchCampaign = null;
                             _currentTwitchLogin = null;
                             UpdateCurrentSelectionFlags();
@@ -1129,6 +1657,7 @@ namespace Core.Managers
 
                         _currentTwitchLogin = twitchLogin;
                         _lastKnownTwitchOnlineState = true;
+                        _twitchCurrentlyOnline = true;
                         UpdateCurrentSelectionFlags();
 
                         // Sync baseline NOW - right after selection, before any further logic
@@ -1197,10 +1726,73 @@ namespace Core.Managers
                     if (token.IsCancellationRequested)
                         return;
 
-                    List<DropsCampaign> remainingKickCampaigns = [.. kickCampaigns];
+                    // If the user pinned a Kick campaign, consider ONLY that one (idle/wait if its channels are
+                    // offline, rather than switching to a different campaign).
+                    List<DropsCampaign> remainingKickCampaigns =
+                        !string.IsNullOrWhiteSpace(_forcedCampaignId) && kickCampaigns.Any(c => c.Id == _forcedCampaignId)
+                            ? kickCampaigns.Where(c => c.Id == _forcedCampaignId).ToList()
+                            : [.. kickCampaigns];
+
+                    // Pre-filter with ONE batched API call: drop campaigns whose listed channels are all offline,
+                    // so we never navigate to (visibly hop across) dead channels one-by-one. Campaigns without a
+                    // listed channel (true category drops) are kept for the directory fallback. A user-forced pick
+                    // is always kept. On any lookup failure we keep everything (old behaviour).
+                    string? forcedKickPreId;
+                    lock (_lastStreamerSync) { forcedKickPreId = _forcedKickStreamer?.CampaignId; }
+
+                    List<string> preflightSlugs = remainingKickCampaigns
+                        .SelectMany(CampaignChannelLogins)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Take(60)
+                        .ToList();
+
+                    if (preflightSlugs.Count != 0)
+                    {
+                        Dictionary<string, int> preStatus = new(StringComparer.OrdinalIgnoreCase);
+                        try
+                        {
+                            string statusJson = await await Application.Current.Dispatcher.InvokeAsync(
+                                async () => await KickWebView!.FetchKickChannelStatusesAsync(preflightSlugs, 12000));
+                            using JsonDocument doc = JsonDocument.Parse(statusJson);
+                            foreach (JsonProperty p in doc.RootElement.EnumerateObject())
+                                if (p.Value.ValueKind == JsonValueKind.Number)
+                                    preStatus[p.Name] = p.Value.GetInt32();
+
+                            int before = remainingKickCampaigns.Count;
+                            remainingKickCampaigns = remainingKickCampaigns.Where(c =>
+                            {
+                                if (c.Id == forcedKickPreId) return true;
+                                List<string> chans = CampaignChannelLogins(c);
+                                if (chans.Count == 0) return true; // category drop -> handled via directory
+                                return chans.Any(ch => preStatus.TryGetValue(ch, out int v) && v >= 0);
+                            }).ToList();
+
+                            AppLogger.Info("KickSelection", $"Pre-filtered Kick campaigns by live channel: {before} -> {remainingKickCampaigns.Count}.");
+                        }
+                        catch (Exception ex)
+                        {
+                            AppLogger.Warn("KickSelection", $"Kick pre-filter status lookup failed: {ex.Message}");
+                        }
+                    }
+
+                    // Drop the previous Kick selection before re-picking: Kick has no keep-current fast-path, so if
+                    // every candidate was pre-filtered out (all listed channels offline) the loop below won't run and
+                    // we must NOT keep silently "watching" the now-offline channel (its bar would keep climbing while
+                    // the server credits nothing). Clearing here means an all-offline situation ends as Idle.
+                    _currentKickCampaign = null;
+                    _currentKickLogin = null;
+                    _kickCurrentlyOnline = false;
+
                     while (remainingKickCampaigns.Count != 0)
                     {
-                        DropsCampaign? bestKick = await SelectBestCampaign(remainingKickCampaigns);
+                        // If the user just picked a specific channel, select that channel's campaign first so the
+                        // pick isn't lost to a higher-priority campaign that happens to rank above it.
+                        string? forcedKickCampId;
+                        lock (_lastStreamerSync) { forcedKickCampId = _forcedKickStreamer?.CampaignId; }
+
+                        DropsCampaign? bestKick = forcedKickCampId != null
+                            ? remainingKickCampaigns.FirstOrDefault(c => c.Id == forcedKickCampId) ?? await SelectBestCampaign(remainingKickCampaigns)
+                            : await SelectBestCampaign(remainingKickCampaigns);
                         if (bestKick == null)
                             break;
 
@@ -1226,12 +1818,17 @@ namespace Core.Managers
                         await Task.Delay(5000);
 
                         _currentKickCampaign = bestKick;
-                        bool kickOnline = await IsKickStreamOnline();
-                        bool kickCorrectCategory = await IsKickStreamCategoryCorrect();
+                        bool kickOnline = await IsKickStreamOnline(GetStreamerNameFromUrl(kickUrl));
+                        // Channel-bound campaigns (specific participating channels, incl. "Football Drop") earn on
+                        // that channel regardless of what it's currently streaming, so category is not required.
+                        bool kickChannelBound = CampaignChannelLogins(bestKick).Count > 0;
+                        bool kickCorrectCategory = kickChannelBound || await IsKickStreamCategoryCorrect();
 
-                        if (!kickOnline || !kickCorrectCategory)
+                        // An explicit user pick (or a channel-bound campaign) is trusted on category, but must still
+                        // be actually online to be worth watching.
+                        if (!kickOnline || (!kickCorrectCategory && !_kickSelectionForced))
                         {
-                            AppLogger.Warn("KickSelection", $"Kick campaign '{bestKick.Name}' failed streamer eligibility. online={kickOnline}, categoryOk={kickCorrectCategory}");
+                            AppLogger.Warn("KickSelection", $"Kick campaign '{bestKick.Name}' failed streamer eligibility. online={kickOnline}, categoryOk={kickCorrectCategory}, channelBound={kickChannelBound}, forced={_kickSelectionForced}");
                             _currentKickCampaign = null;
                             _currentKickLogin = null;
                             UpdateCurrentSelectionFlags();
@@ -1241,6 +1838,7 @@ namespace Core.Managers
 
                         _currentKickLogin = GetStreamerNameFromUrl(kickUrl);
                         _lastKnownKickOnlineState = true;
+                        _kickCurrentlyOnline = true;
                         UpdateCurrentSelectionFlags();
 
                         _kickWatchedSeconds = bestKick.Rewards
@@ -1290,6 +1888,9 @@ namespace Core.Managers
                     if (_currentKickCampaign == null)
                     {
                         AppLogger.Warn("KickSelection", $"No Kick campaign passed eligibility checks. candidates={kickCampaigns.Count}");
+                        // Surface the idle state on the Kick card so it doesn't keep showing a stale campaign whose
+                        // bar climbs while nothing is actually being earned. Makes "no live channels — waiting" visible.
+                        ClearKickCard();
                     }
                 }
 
@@ -1324,6 +1925,35 @@ namespace Core.Managers
                 AppLogger.Info("Miner", $"Next re-evaluation in {delayMs / 1000:F0}s at {nextCheckAt:u}. twitchSelected={_currentTwitchCampaign != null}, kickSelected={_currentKickCampaign != null}");
 
                 MinerStatusChanged?.Invoke(_currentTwitchCampaign != null || _currentKickCampaign != null ? "Mining" : "Idle");
+            }
+            catch (Exception ex)
+            {
+                // A transient failure mid-selection (network drop, PC wake before DNS is ready, etc.) used to leave
+                // the watcher dead: the timers were stopped at the start of this method and never restarted, so
+                // mining froze until a manual restart. Recover automatically — resume the live tick, restart health
+                // monitoring, and retry selection shortly so the app heals itself once the network is back.
+                AppLogger.Error("Miner", "StartWatchingStreams failed (likely transient network issue); scheduling recovery retry.", ex);
+                try
+                {
+                    _liveProgressTimer?.Start();
+                    StartStreamHealthMonitoring();
+
+                    _recheckTimer?.Stop();
+                    _recheckTimer?.Dispose();
+                    _recheckTimer = new System.Timers.Timer(60_000);
+                    _recheckTimer.AutoReset = false;
+                    _recheckTimer.Elapsed += async (s, e) =>
+                    {
+                        _recheckTimer?.Stop();
+                        AppLogger.Info("Miner", "Recovery re-evaluation after earlier failure.");
+                        await StartWatchingStreams(true);
+                    };
+                    _recheckTimer.Start();
+                }
+                catch (Exception inner)
+                {
+                    AppLogger.Warn("Miner", $"Failed to schedule recovery retry: {inner.Message}");
+                }
             }
             finally
             {
@@ -1430,6 +2060,7 @@ namespace Core.Managers
                     updatedCampaigns.Add(campaign with
                     {
                         IsCurrentCampaign = isCurrentCampaign,
+                        IsPinned = !string.IsNullOrWhiteSpace(_forcedCampaignId) && campaign.Id == _forcedCampaignId,
                         Rewards = updatedRewards
                     });
                 }
@@ -1493,15 +2124,41 @@ namespace Core.Managers
                     AppLogger.Debug("HealthCheck", $"Twitch category correct: {twitchCorrectCategory} | Kick category correct: {kickCorrectCategory} | Twitch showing ad: {twitchShowingAd}");
                     AppLogger.Info("HealthCheck", $"Twitch online={twitchOnline}, categoryOk={twitchCorrectCategory}, showingAd={twitchShowingAd}; Kick online={kickOnline}, categoryOk={kickCorrectCategory}");
 
+                    // Freeze the optimistic tick the moment a platform is offline (no real progress is being earned).
+                    _twitchCurrentlyOnline = _currentTwitchCampaign != null && twitchOnline;
+                    _kickCurrentlyOnline = _currentKickCampaign != null && kickOnline;
+
                     TwitchStreamOnlineChanged?.Invoke(twitchOnline);
                     KickStreamOnlineChanged?.Invoke(kickOnline);
+
+                    // Keep the display honest: snap each platform to the server's real progress (throttled to ~3 min),
+                    // so the optimistic local tick can't keep showing more than what was actually credited. For Twitch
+                    // this means a rate-limited/blocked account shows the real frozen value instead of a fake climb.
+                    if (_currentKickCampaign != null && kickOnline)
+                        await ReconcileKickProgressAsync();
+                    if (_currentTwitchCampaign != null && twitchOnline)
+                        await ReconcileTwitchProgressAsync();
 
                     // Group campaigns by platform
                     List<DropsCampaign> twitchCampaigns = [.. ActiveCampaigns.Where(c => c.Platform == Platform.Twitch && c.HasProgressToMake())];
                     List<DropsCampaign> kickCampaigns = [.. ActiveCampaigns.Where(c => c.Platform == Platform.Kick && c.HasProgressToMake())];
 
-                    bool twitchNeedsReevaluation = twitchCampaigns.Count != 0 && (!twitchOnline || !twitchCorrectCategory || twitchShowingAd) && _lastKnownTwitchOnlineState;
-                    bool kickNeedsReevaluation = kickCampaigns.Count != 0 && (!kickOnline || !kickCorrectCategory) && _lastKnownKickOnlineState;
+                    // NOTE: an ad is NOT a reason to switch — Twitch keeps crediting drop watch time during ads, and
+                    // switching channel/campaign on every ad caused needless thrashing (jumping off a perfectly good
+                    // campaign). Only switch when the stream is actually offline or in the wrong category.
+                    // Re-evaluate when the watched stream isn't earning even though it's online:
+                    //  - the current CHANNEL stalled (froze) → rotate to a fresh streamer of the same campaign
+                    //    (this also applies to a PINNED campaign — the pin fixes the campaign, not the channel);
+                    //  - the current CAMPAIGN was flagged not-crediting (non-pinned only) → switch campaign.
+                    bool twitchStalled = (_currentTwitchCampaign != null && IsChannelStalled(Platform.Twitch, _currentTwitchLogin))
+                        || (_currentTwitchCampaign != null && IsNotCrediting(_currentTwitchCampaign.Id)
+                            && !string.Equals(_forcedCampaignId, _currentTwitchCampaign.Id, StringComparison.Ordinal));
+                    bool kickStalled = (_currentKickCampaign != null && IsChannelStalled(Platform.Kick, _currentKickLogin))
+                        || (_currentKickCampaign != null && IsNotCrediting(_currentKickCampaign.Id)
+                            && !string.Equals(_forcedCampaignId, _currentKickCampaign.Id, StringComparison.Ordinal));
+
+                    bool twitchNeedsReevaluation = (twitchCampaigns.Count != 0 && (!twitchOnline || !twitchCorrectCategory) && _lastKnownTwitchOnlineState) || twitchStalled;
+                    bool kickNeedsReevaluation = (kickCampaigns.Count != 0 && (!kickOnline || !kickCorrectCategory) && _lastKnownKickOnlineState) || kickStalled;
 
                     // Idle retry: a platform with no selection but campaigns still worth mining (e.g. its
                     // campaign just completed, or no streamer was live earlier) re-attempts selection
@@ -1522,12 +2179,6 @@ namespace Core.Managers
 
                     if (twitchNeedsReevaluation || kickNeedsReevaluation)
                     {
-                        if (twitchShowingAd && !string.IsNullOrWhiteSpace(_currentTwitchCampaign?.Slug))
-                        {
-                            ForgetLastStreamerUrl(Platform.Twitch, _currentTwitchCampaign!.Id);
-                            AppLogger.Warn("HealthCheck", $"Twitch ad detected for campaign '{_currentTwitchCampaign.Name}'. Forgetting remembered streamer to force a switch.");
-                        }
-
                         if (!twitchOnline)
                             _lastKnownTwitchOnlineState = false;
 
@@ -1577,6 +2228,18 @@ namespace Core.Managers
                 {
                     AppLogger.Info("Selection", $"Using user-forced campaign '{forced.Name}' ({forced.Id}).");
                     return Task.FromResult<DropsCampaign?>(forced);
+                }
+            }
+
+            // Skip campaigns that proved to not actually credit (server frozen while watched) — but never go idle:
+            // if every candidate is flagged, fall back to the full list.
+            lock (_creditSync)
+            {
+                if (_notCreditingCampaignIds.Count != 0)
+                {
+                    List<DropsCampaign> crediting = campaigns.Where(c => !_notCreditingCampaignIds.Contains(c.Id)).ToList();
+                    if (crediting.Count != 0)
+                        campaigns = crediting;
                 }
             }
 
@@ -1656,6 +2319,43 @@ namespace Core.Managers
         /// found, the operation is silently ignored. No exceptions are thrown for failures.</remarks>
         /// <returns>A task that represents the asynchronous operation. The task completes when the quality selection attempt has
         /// finished.</returns>
+        /// <summary>
+        /// Ensures the platform's (hidden) video element is actually playing. A paused/stalled player earns no
+        /// drop credit on the server even when the channel is live, so this is called periodically by the health
+        /// check to keep watch time accumulating.
+        /// </summary>
+        private async Task EnsureVideoPlayingAsync(Platform platform)
+        {
+            IWebViewHost? host = platform == Platform.Twitch ? TwitchWebView : KickWebView;
+            if (host == null)
+                return;
+
+            const string js = @"
+                (() => {
+                    const vids = Array.from(document.querySelectorAll('video'));
+                    if (vids.length === 0) return 'no-video';
+                    let acted = 'playing';
+                    for (const v of vids) {
+                        try {
+                            v.muted = true;
+                            if (v.paused) { v.play().catch(() => {}); acted = 'resumed'; }
+                        } catch (e) {}
+                    }
+                    return acted;
+                })();
+            ";
+
+            try
+            {
+                string r = await await Application.Current.Dispatcher.InvokeAsync(async () => await host.ExecuteScriptAsync(js));
+                if (r != null && r.Contains("resumed", StringComparison.OrdinalIgnoreCase))
+                    AppLogger.Info("Playback", $"{platform} player was paused; called play() to keep earning.");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("Playback", $"{platform} ensure-playing failed: {ex.Message}");
+            }
+        }
         private async Task SetTwitchStreamToLowestQualityAsync()
         {
             if (TwitchWebView == null) return;
@@ -1760,27 +2460,336 @@ namespace Core.Managers
         /// 'LIVE' label in the page content. If KickWebView is null, the method returns <see
         /// langword="false"/>.</remarks>
         /// <returns>A <see langword="true"/> value if the Kick stream is online; otherwise, <see langword="false"/>.</returns>
-        private async Task<bool> IsKickStreamOnline()
+        private async Task<bool> IsKickStreamOnline(string? login = null)
         {
-            if (KickWebView == null)
+            string? slug = !string.IsNullOrWhiteSpace(login) ? login : _currentKickLogin;
+            if (KickWebView == null || string.IsNullOrWhiteSpace(slug))
                 return false;
 
-            string js = @"
-                (() => {
-                    let headings = document.evaluate(""//span[contains(., 'LIVE')]"", document, null, XPathResult.ANY_TYPE, null );
-                    let thisHeading = headings.iterateNext();
-                    return thisHeading != null;
-                })();
-            ";
+            // Use Kick's authoritative channel API (livestream present?) instead of scraping the DOM for the word
+            // "LIVE" — that gave false positives (e.g. "Watch live" buttons / recommended-live sidebars) and made the
+            // miner sit on offline channels showing fake local progress.
+            try
+            {
+                string json = await await Application.Current.Dispatcher.InvokeAsync(
+                    async () => await KickWebView.FetchKickChannelStatusesAsync(new[] { slug! }, 8000));
 
-            string rawResult = await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView.ExecuteScriptAsync(js));
-            bool isOnline = rawResult?
-                .Trim()
-                .Trim('"')
-                .Equals("true", StringComparison.OrdinalIgnoreCase) ?? false;
+                using JsonDocument doc = JsonDocument.Parse(json);
+                bool isOnline = doc.RootElement.TryGetProperty(slug!, out JsonElement v)
+                                && v.ValueKind == JsonValueKind.Number
+                                && v.GetInt32() >= 0; // viewer_count when live, -1 when offline/unknown
 
-            AppLogger.Debug("KickSelection", $"[DropsInventoryManager] Kick stream online status: {isOnline}");
-            return isOnline;
+                AppLogger.Debug("KickSelection", $"[DropsInventoryManager] Kick stream online status for '{slug}': {isOnline}");
+                return isOnline;
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("KickSelection", $"Kick online check via API failed for '{slug}': {ex.Message}");
+                return false;
+            }
+        }
+
+        private DateTime _lastKickProgressReconcile = DateTime.MinValue;
+
+        /// <summary>
+        /// Pulls the authoritative Kick drops progress from the server (via a non-disruptive in-page fetch) and
+        /// snaps the displayed progress to it, so the optimistic per-minute tick can't keep showing more than the
+        /// real value. No navigation/reset of the watched stream. Throttled to once every ~3 minutes.
+        /// </summary>
+        private async Task ReconcileKickProgressAsync()
+        {
+            if (KickWebView == null || _currentKickCampaign == null || _isPaused)
+                return;
+            if ((DateTime.Now - _lastKickProgressReconcile).TotalMinutes < 3)
+                return;
+            _lastKickProgressReconcile = DateTime.Now;
+
+            try
+            {
+                string json = await await Application.Current.Dispatcher.InvokeAsync(
+                    async () => await KickWebView.FetchKickDropsProgressAsync());
+                if (string.IsNullOrWhiteSpace(json))
+                    return;
+
+                Dictionary<string, int> campProgress = new(StringComparer.Ordinal);
+                Dictionary<string, bool> rewardClaimed = new(StringComparer.Ordinal);
+                using (JsonDocument doc = JsonDocument.Parse(json))
+                {
+                    if (!doc.RootElement.TryGetProperty("data", out JsonElement arr) || arr.ValueKind != JsonValueKind.Array)
+                        return;
+                    foreach (JsonElement item in arr.EnumerateArray())
+                    {
+                        if (!item.TryGetProperty("id", out JsonElement idEl)) continue;
+                        string cid = idEl.GetString() ?? "";
+                        if (item.TryGetProperty("progress_units", out JsonElement pu) && pu.ValueKind == JsonValueKind.Number)
+                            campProgress[cid] = pu.GetInt32();
+                        if (item.TryGetProperty("rewards", out JsonElement rewards) && rewards.ValueKind == JsonValueKind.Array)
+                            foreach (JsonElement rw in rewards.EnumerateArray())
+                                if (rw.TryGetProperty("id", out JsonElement rid) && rw.TryGetProperty("claimed", out JsonElement cl))
+                                    rewardClaimed[rid.GetString() ?? ""] = cl.GetBoolean();
+                    }
+                }
+
+                if (campProgress.Count == 0)
+                    return;
+
+                await Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    for (int i = 0; i < ActiveCampaigns.Count; i++)
+                    {
+                        DropsCampaign c = ActiveCampaigns[i];
+                        if (c.Platform != Platform.Kick)
+                            continue;
+
+                        if (campProgress.TryGetValue(c.Id, out int units))
+                        {
+                            List<DropsReward> updated = c.Rewards.Select(r => r with
+                            {
+                                ProgressMinutes = Math.Min(units, r.RequiredMinutes),
+                                IsClaimed = rewardClaimed.TryGetValue(r.Id, out bool claimed) ? claimed : r.IsClaimed
+                            }).ToList();
+                            ActiveCampaigns[i] = c with { Rewards = updated };
+                        }
+                        else if (c.Rewards.Any(r => !r.IsClaimed && r.ProgressMinutes > 0))
+                        {
+                            // Not in the server progress response → genuinely 0 progress. Clear the optimistic local
+                            // progress that the co-mining tick added (claimed rewards keep their state).
+                            List<DropsReward> updated = c.Rewards
+                                .Select(r => r.IsClaimed ? r : r with { ProgressMinutes = 0 })
+                                .ToList();
+                            ActiveCampaigns[i] = c with { Rewards = updated };
+                        }
+                    }
+
+                    // Snap the watched Kick baseline to the server value so the live tick continues from the truth.
+                    if (_currentKickCampaign != null)
+                    {
+                        DropsCampaign? fresh = ActiveCampaigns.FirstOrDefault(c => c.Id == _currentKickCampaign.Id);
+                        if (fresh != null)
+                        {
+                            _currentKickCampaign = fresh;
+                            _kickWatchedSeconds = fresh.Rewards.Sum(r => Math.Min(r.ProgressMinutes, r.RequiredMinutes) * 60);
+                            DropsReward? nextR = fresh.Rewards.Where(r => !r.IsClaimed).OrderBy(r => r.RequiredMinutes).FirstOrDefault();
+                            int beforeNext = fresh.Rewards.Where(r => !r.IsClaimed && r.RequiredMinutes < (nextR?.RequiredMinutes ?? 0)).Sum(r => r.RequiredMinutes);
+                            _kickDropWatchedSeconds = Math.Max(0, (nextR?.ProgressMinutes ?? 0) - beforeNext) * 60;
+                            _kickAppliedMinuteBucket = _kickWatchedSeconds / 60;
+                            KickProgressChanged?.Invoke(CalculateLiveCampaignProgress(fresh), CalculateLiveDropProgress(fresh, _kickDropWatchedSeconds));
+                        }
+                    }
+                });
+
+                if (_currentKickCampaign != null && campProgress.TryGetValue(_currentKickCampaign.Id, out int kickMin))
+                    TrackCampaignCrediting(_currentKickCampaign.Id, Platform.Kick, kickMin);
+
+                AppLogger.Info("KickProgress", $"Reconciled Kick progress to server for {campProgress.Count} campaign(s).");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("KickProgress", $"Reconcile failed: {ex.Message}");
+            }
+        }
+
+        private DateTime _lastTwitchProgressReconcile = DateTime.MinValue;
+
+        /// <summary>
+        /// Pulls the authoritative Twitch drop progress from the server (GraphQL drops dashboard, cached headers so
+        /// no re-navigation) and snaps the display to it. This keeps the Twitch bar honest — if the server isn't
+        /// crediting (e.g. account rate-limited), the bar shows the real frozen value instead of the optimistic
+        /// climb. Throttled to once every ~3 minutes.
+        /// </summary>
+        private async Task ReconcileTwitchProgressAsync()
+        {
+            if (_twitchGqlService == null || _currentTwitchCampaign == null || _isPaused)
+                return;
+            if ((DateTime.Now - _lastTwitchProgressReconcile).TotalMinutes < 3)
+                return;
+            _lastTwitchProgressReconcile = DateTime.Now;
+
+            try
+            {
+                JsonArray dashboard = await _twitchGqlService.QueryFullDropsDashboardAsync();
+                JsonArray? inProgress = dashboard.Count > 0
+                    ? dashboard[0]?["data"]?["currentUser"]?["inventory"]?["dropCampaignsInProgress"]?.AsArray()
+                    : null;
+                if (inProgress == null)
+                    return;
+
+                Dictionary<string, (int Minutes, bool Claimed)> rewardProgress = new(StringComparer.Ordinal);
+                foreach (JsonNode? camp in inProgress)
+                {
+                    JsonArray? drops = camp?["timeBasedDrops"]?.AsArray();
+                    if (drops == null) continue;
+                    foreach (JsonNode? d in drops)
+                    {
+                        string? rid = d?["id"]?.GetValue<string>();
+                        if (string.IsNullOrEmpty(rid)) continue;
+                        int min = d?["self"]?["currentMinutesWatched"]?.GetValue<int>() ?? 0;
+                        bool claimed = d?["self"]?["isClaimed"]?.GetValue<bool>() ?? false;
+                        rewardProgress[rid] = (min, claimed);
+                    }
+                }
+                if (rewardProgress.Count == 0)
+                    return;
+
+                await Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    for (int i = 0; i < ActiveCampaigns.Count; i++)
+                    {
+                        DropsCampaign c = ActiveCampaigns[i];
+                        if (c.Platform != Platform.Twitch || !c.Rewards.Any(r => rewardProgress.ContainsKey(r.Id)))
+                            continue;
+
+                        List<DropsReward> updated = c.Rewards.Select(r =>
+                            rewardProgress.TryGetValue(r.Id, out (int Minutes, bool Claimed) p)
+                                ? r with { ProgressMinutes = Math.Min(p.Minutes, r.RequiredMinutes), IsClaimed = p.Claimed }
+                                : r).ToList();
+                        ActiveCampaigns[i] = c with { Rewards = updated };
+                    }
+
+                    if (_currentTwitchCampaign != null)
+                    {
+                        DropsCampaign? fresh = ActiveCampaigns.FirstOrDefault(c => c.Id == _currentTwitchCampaign.Id);
+                        if (fresh != null)
+                        {
+                            _currentTwitchCampaign = fresh;
+                            _twitchWatchedSeconds = fresh.Rewards.Sum(r => Math.Min(r.ProgressMinutes, r.RequiredMinutes) * 60);
+                            DropsReward? nextR = fresh.Rewards.Where(r => !r.IsClaimed).OrderBy(r => r.RequiredMinutes).FirstOrDefault();
+                            int beforeNext = fresh.Rewards.Where(r => !r.IsClaimed && r.RequiredMinutes < (nextR?.RequiredMinutes ?? 0)).Sum(r => r.RequiredMinutes);
+                            _twitchDropWatchedSeconds = Math.Max(0, (nextR?.ProgressMinutes ?? 0) - beforeNext) * 60;
+                            _twitchAppliedMinuteBucket = _twitchWatchedSeconds / 60;
+                            TwitchProgressChanged?.Invoke(CalculateLiveCampaignProgress(fresh), CalculateLiveDropProgress(fresh, _twitchDropWatchedSeconds));
+                        }
+                    }
+                });
+
+                string watchedDiag = "n/a";
+                if (_currentTwitchCampaign != null)
+                {
+                    DropsReward? cur = _currentTwitchCampaign.Rewards.Where(r => !r.IsClaimed).OrderBy(r => r.RequiredMinutes).FirstOrDefault();
+                    if (cur != null && rewardProgress.TryGetValue(cur.Id, out (int Minutes, bool Claimed) cp))
+                        watchedDiag = $"{cur.Name}={cp.Minutes}/{cur.RequiredMinutes} min";
+
+                    // Detect a campaign that isn't actually crediting (server frozen while watched) and switch off it.
+                    int serverTotal = _currentTwitchCampaign.Rewards
+                        .Where(r => rewardProgress.ContainsKey(r.Id))
+                        .Sum(r => rewardProgress[r.Id].Minutes);
+                    TrackCampaignCrediting(_currentTwitchCampaign.Id, Platform.Twitch, serverTotal);
+                }
+                AppLogger.Info("TwitchProgress", $"Reconciled Twitch progress to server for {rewardProgress.Count} drop(s). watched: {watchedDiag}");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("TwitchProgress", $"Reconcile failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Tracks whether the currently-watched campaign is actually earning SERVER progress. If it stays frozen for
+        /// ~2 consecutive reconciles (~6 min) while watched, it's flagged as not-crediting and we re-select off it,
+        /// so the miner stops wasting time on a campaign that won't progress (e.g. R6S without a Ubisoft link).
+        /// A user-pinned campaign is never auto-switched (the user asked for it).
+        /// </summary>
+        /// <summary>
+        /// Resets the Kick dashboard card to an explicit "waiting — no live channel" idle state, so a stale
+        /// campaign whose bar would otherwise keep ticking is replaced by a clear indication that nothing is
+        /// currently being mined on Kick.
+        /// </summary>
+        private void ClearKickCard()
+        {
+            _kickCurrentlyOnline = false;
+            KickProgressChanged?.Invoke(0, 0);
+            KickCampaignChanged?.Invoke("Waiting — no live channel", null);
+            KickDropChanged?.Invoke(string.Empty, null);
+            KickChannelChanged?.Invoke(string.Empty);
+            KickStreamOnlineChanged?.Invoke(false);
+        }
+
+        /// <summary>True when the campaign was flagged as not actually crediting (server progress frozen while watched).</summary>
+        private bool IsNotCrediting(string? campaignId)
+        {
+            if (string.IsNullOrEmpty(campaignId))
+                return false;
+            lock (_creditSync) { return _notCreditingCampaignIds.Contains(campaignId); }
+        }
+
+        /// <summary>True when this channel froze (earned no server progress) and should be skipped during selection.</summary>
+        private bool IsChannelStalled(Platform platform, string? login)
+        {
+            if (string.IsNullOrWhiteSpace(login))
+                return false;
+            lock (_creditSync)
+            {
+                return platform == Platform.Twitch ? _stalledTwitchLogins.Contains(login) : _stalledKickLogins.Contains(login);
+            }
+        }
+
+        /// <summary>
+        /// Removes channels known to be stalled (frozen, not crediting) from a candidate list so selection rotates
+        /// to a fresh streamer. If every candidate is stalled, returns the original list unchanged — better to retry
+        /// a stalled channel than to go idle with no stream at all.
+        /// </summary>
+        private List<string> ExcludeStalledLogins(Platform platform, List<string> logins)
+        {
+            if (logins.Count == 0)
+                return logins;
+            List<string> filtered;
+            lock (_creditSync)
+            {
+                HashSet<string> stalled = platform == Platform.Twitch ? _stalledTwitchLogins : _stalledKickLogins;
+                if (stalled.Count == 0)
+                    return logins;
+                filtered = logins.Where(l => !stalled.Contains(l)).ToList();
+            }
+            return filtered.Count != 0 ? filtered : logins;
+        }
+
+        private void TrackCampaignCrediting(string campaignId, Platform platform, int serverMinutes)
+        {
+            // Only FLAG here. The actual switch is driven by the 30s health check (which re-evaluates the flagged
+            // platform on its proven awaited path); firing StartWatchingStreams from inside this reconcile — itself
+            // invoked from the health check — proved unreliable (the fire-and-forget call could be swallowed).
+            string? currentLogin = platform == Platform.Twitch ? _currentTwitchLogin : _currentKickLogin;
+            bool pinned = string.Equals(_forcedCampaignId, campaignId, StringComparison.Ordinal);
+
+            lock (_creditSync)
+            {
+                if (_creditTracking.TryGetValue(campaignId, out (int Minutes, int FrozenCount) prev))
+                {
+                    if (serverMinutes > prev.Minutes)
+                    {
+                        // Progress resumed — this campaign AND its current channel are crediting again.
+                        _creditTracking[campaignId] = (serverMinutes, 0);
+                        _notCreditingCampaignIds.Remove(campaignId);
+                    }
+                    else
+                    {
+                        int frozen = prev.FrozenCount + 1;
+                        _creditTracking[campaignId] = (serverMinutes, frozen);
+                        if (frozen >= 2)
+                        {
+                            // The channel we're watching isn't earning — blacklist it so selection rotates to a
+                            // different live channel of the same campaign (the dead one was being reused from the
+                            // remembered-streamer cache). Reset the frozen counter so the NEW channel gets a fair trial.
+                            if (!string.IsNullOrWhiteSpace(currentLogin))
+                            {
+                                HashSet<string> stalled = platform == Platform.Twitch ? _stalledTwitchLogins : _stalledKickLogins;
+                                if (stalled.Add(currentLogin))
+                                    AppLogger.Warn("Selection", $"Channel '{currentLogin}' not crediting campaign {campaignId} (server frozen at {serverMinutes}m) — rotating to another streamer.");
+                            }
+                            _creditTracking[campaignId] = (serverMinutes, 0);
+
+                            // Only give up on the whole campaign (skip it) when it's NOT pinned. A pinned campaign is
+                            // the user's explicit choice, so we keep it and just hop channels.
+                            if (!pinned)
+                                _notCreditingCampaignIds.Add(campaignId);
+                        }
+                    }
+                }
+                else
+                {
+                    _creditTracking[campaignId] = (serverMinutes, 0);
+                }
+            }
         }
         /// <summary>
         /// Determines whether the current Kick stream category matches the expected category based on the active Kick
@@ -1967,7 +2976,25 @@ namespace Core.Managers
         private async Task<string> SelectKickStreamerForCampaign(DropsCampaign campaign)
         {
             string streamerUrl = string.Empty;
+            _kickSelectionForced = false;
             TryGetLastStreamerUrl(Platform.Kick, campaign.Id, out string? rememberedKickUrl);
+            // Ignore a previously-remembered non-channel URL (e.g. a stale kick.com/category/... value).
+            if (!string.IsNullOrWhiteSpace(rememberedKickUrl) && !IsRealChannelUrl(rememberedKickUrl))
+                rememberedKickUrl = null;
+
+            // Honour an explicit user pick directly (no live/category gate) so the chosen channel is never
+            // silently swapped back to a different one.
+            lock (_lastStreamerSync)
+            {
+                if (_forcedKickStreamer is { } forced &&
+                    string.Equals(forced.CampaignId, campaign.Id, StringComparison.OrdinalIgnoreCase))
+                {
+                    streamerUrl = forced.Url;
+                    _forcedKickStreamer = null;
+                    _kickSelectionForced = true;
+                    AppLogger.Info("KickSelection", $"Using user-picked Kick streamer directly for '{campaign.Name}': {streamerUrl}");
+                }
+            }
 
             string getStreamerCategoryJs = @"
                 (() => {
@@ -2009,38 +3036,49 @@ namespace Core.Managers
                 ";
             }
 
-            if (!campaign.IsGeneralDrop)
+            if (!string.IsNullOrWhiteSpace(streamerUrl))
             {
-                // NON-GENERAL DROPS
-                IEnumerable<string> orderedConnectUrls = campaign.ConnectUrls;
-                if (!string.IsNullOrWhiteSpace(rememberedKickUrl))
+                // User-picked channel already resolved above; skip the auto-selection heuristics.
+            }
+            else if (CampaignChannelLogins(campaign).Count > 0)
+            {
+                // Channel-bound campaign: specific participating channels. This also covers Kick "Football Drop"
+                // campaigns that are flagged "general" but actually require a particular channel. The channel itself
+                // is the requirement (category is irrelevant), so pick one that is live via Kick's API and watch it
+                // directly — never scrape a directory (which returns null on a live channel page) or gate on category.
+                List<string> channelLogins = CampaignChannelLogins(campaign);
+                Dictionary<string, int> status = new(StringComparer.OrdinalIgnoreCase);
+                try
                 {
-                    orderedConnectUrls = new[] { rememberedKickUrl! }
-                        .Concat(campaign.ConnectUrls)
-                        .Distinct(StringComparer.OrdinalIgnoreCase);
+                    string json = await await Application.Current.Dispatcher.InvokeAsync(
+                        async () => await KickWebView!.FetchKickChannelStatusesAsync(channelLogins.Take(40).ToList(), 10000));
+                    using JsonDocument doc = JsonDocument.Parse(json);
+                    foreach (JsonProperty p in doc.RootElement.EnumerateObject())
+                        if (p.Value.ValueKind == JsonValueKind.Number)
+                            status[p.Name] = p.Value.GetInt32();
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn("KickSelection", $"Channel status lookup failed for '{campaign.Name}': {ex.Message}");
                 }
 
-                foreach (string connectUrl in orderedConnectUrls)
+                List<string> online = FilterSkippedLogins(Platform.Kick,
+                    channelLogins.Where(l => status.TryGetValue(l, out int v) && v >= 0).ToList());
+                online = ExcludeStalledLogins(Platform.Kick, online);
+
+                string? rememberedLogin = string.IsNullOrWhiteSpace(rememberedKickUrl) ? null : GetStreamerNameFromUrl(rememberedKickUrl!);
+                string? pick = rememberedLogin != null && !IsChannelStalled(Platform.Kick, rememberedLogin) && online.Any(l => string.Equals(l, rememberedLogin, StringComparison.OrdinalIgnoreCase))
+                    ? rememberedLogin
+                    : online.FirstOrDefault();
+
+                if (!string.IsNullOrWhiteSpace(pick))
                 {
-                    await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.NavigateAsync(connectUrl));
-                    await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.WaitForNetworkIdleAsync(5000, 500));
-
-                    string categoryResult = await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.ExecuteScriptAsync(getStreamerCategoryJs));
-
-                    if (KickCategoryHrefMatchesCampaign(categoryResult, campaign.Slug))
-                    {
-                        streamerUrl = connectUrl;
-
-                        if (!string.IsNullOrWhiteSpace(rememberedKickUrl) &&
-                            string.Equals(connectUrl, rememberedKickUrl, StringComparison.OrdinalIgnoreCase))
-                        {
-                            AppLogger.Info("KickSelection", $"Remembered Kick streamer accepted for campaign '{campaign.Name}': {connectUrl}");
-                        }
-
-                        break;
-                    }
-
-                    AppLogger.Warn("KickSelection", $"Kick URL category mismatch for campaign '{campaign.Name}'. url='{connectUrl}', category='{categoryResult.Trim('"')}', slug='{campaign.Slug}'");
+                    streamerUrl = $"https://kick.com/{pick}";
+                    AppLogger.Info("KickSelection", $"Selected live channel for '{campaign.Name}': {streamerUrl} ({online.Count} live of {channelLogins.Count}).");
+                }
+                else
+                {
+                    AppLogger.Warn("KickSelection", $"No live channel for channel-bound campaign '{campaign.Name}'.");
                 }
             }
             else
@@ -2097,6 +3135,23 @@ namespace Core.Managers
                 }
             }
 
+            // The directory scraper sometimes returns a VOD link (kick.com/<chan>/videos/<id>); reduce it to the
+            // channel root. A real category/directory URL can't be normalised and is discarded (watching it earns
+            // nothing and only produced fake local progress). The online gate below still rejects offline channels.
+            if (!string.IsNullOrWhiteSpace(streamerUrl) && !IsRealChannelUrl(streamerUrl))
+            {
+                if (TryNormalizeChannelUrl(Platform.Kick, streamerUrl, out string normalized))
+                {
+                    AppLogger.Info("KickSelection", $"Normalised non-root URL to channel for '{campaign.Name}': {streamerUrl} -> {normalized}");
+                    streamerUrl = normalized;
+                }
+                else
+                {
+                    AppLogger.Warn("KickSelection", $"Resolved a non-channel URL for '{campaign.Name}' ({streamerUrl}); discarding so nothing fake is mined.");
+                    streamerUrl = string.Empty;
+                }
+            }
+
             // Final logging and event
             if (!string.IsNullOrWhiteSpace(streamerUrl))
             {
@@ -2124,7 +3179,24 @@ namespace Core.Managers
         private async Task<string> SelectTwitchStreamerForCampaign(DropsCampaign campaign)
         {
             string streamerUrl = string.Empty;
+            _twitchSelectionForced = false;
             TryGetLastStreamerUrl(Platform.Twitch, campaign.Id, out string? rememberedTwitchUrl);
+            // Ignore a previously-remembered non-channel URL (e.g. a stale twitch.tv/directory/... value).
+            if (!string.IsNullOrWhiteSpace(rememberedTwitchUrl) && !IsRealChannelUrl(rememberedTwitchUrl))
+                rememberedTwitchUrl = null;
+
+            // Honour an explicit user pick directly (no live/category gate).
+            lock (_lastStreamerSync)
+            {
+                if (_forcedTwitchStreamer is { } forced &&
+                    string.Equals(forced.CampaignId, campaign.Id, StringComparison.OrdinalIgnoreCase))
+                {
+                    streamerUrl = forced.Url;
+                    _forcedTwitchStreamer = null;
+                    _twitchSelectionForced = true;
+                    AppLogger.Info("TwitchSelection", $"Using user-picked Twitch streamer directly for '{campaign.Name}': {streamerUrl}");
+                }
+            }
 
             string getStreamerCategoryHrefJs = @"
                 (() => {
@@ -2145,7 +3217,11 @@ namespace Core.Managers
                 })();
             ";
 
-            if (!campaign.IsGeneralDrop)
+            if (!string.IsNullOrWhiteSpace(streamerUrl))
+            {
+                // User-picked channel already resolved above; skip the auto-selection heuristics.
+            }
+            else if (!campaign.IsGeneralDrop)
             {
                 IEnumerable<string> orderedConnectUrls = campaign.ConnectUrls;
                 if (!string.IsNullOrWhiteSpace(rememberedTwitchUrl))
@@ -2171,6 +3247,7 @@ namespace Core.Managers
 
                     // Honour user "skip streamer" requests; wrap around (clear) if everyone got skipped.
                     liveLogins = FilterSkippedLogins(Platform.Twitch, liveLogins);
+                    liveLogins = ExcludeStalledLogins(Platform.Twitch, liveLogins);
 
                     if (liveLogins.Count == 0)
                     {
@@ -2215,56 +3292,92 @@ namespace Core.Managers
             }
             else
             {
-                // Step 1: Try remembered URL if available (validate it!)
+                // General drop: rely on authoritative GraphQL (live + correct category) instead of fragile
+                // DOM scraping, which intermittently returned empty and caused a needless reselect churn.
+
+                // Step 1: keep the remembered streamer if it's still eligible (and not user-skipped).
                 if (!string.IsNullOrWhiteSpace(rememberedTwitchUrl))
                 {
-                    AppLogger.Info("TwitchSelection", $"Trying remembered Twitch streamer for general campaign '{campaign.Name}': {rememberedTwitchUrl}");
-
-                    await await Application.Current.Dispatcher.InvokeAsync(async () =>
-                        await TwitchWebView!.NavigateAsync(rememberedTwitchUrl));
-
-                    await Task.Delay(1500);  // Consider replacing with WaitForNetworkIdleAsync(5000, 500) for consistency
-
-                    string categoryHrefResult = await await Application.Current.Dispatcher.InvokeAsync(async () =>
-                        await TwitchWebView!.ExecuteScriptAsync(getStreamerCategoryHrefJs));
-
-                    if (TwitchCategoryHrefMatchesCampaign(categoryHrefResult, campaign.Slug))
+                    string rememberedLogin = GetStreamerNameFromUrl(rememberedTwitchUrl!);
+                    bool isSkipped;
+                    lock (_lastStreamerSync)
                     {
-                        AppLogger.Info("TwitchSelection", $"Remembered streamer still matches category for general campaign '{campaign.Name}': {rememberedTwitchUrl}");
-                        streamerUrl = rememberedTwitchUrl!;
+                        isSkipped = _skipTwitchLogins.Contains(rememberedLogin);
                     }
-                    else
+                    // Don't return to a channel that stalled (froze with no credit) — rotate to a fresh one instead.
+                    if (IsChannelStalled(Platform.Twitch, rememberedLogin))
                     {
-                        AppLogger.Warn("TwitchSelection", $"Remembered URL no longer matches category for general '{campaign.Name}': {rememberedTwitchUrl} | found: '{categoryHrefResult}'");
-                        // → fall through to directory fallback
+                        isSkipped = true;
+                        AppLogger.Info("TwitchSelection", $"Remembered Twitch streamer '{rememberedLogin}' is stalled (not crediting) — skipping it to rotate channel.");
+                    }
+
+                    if (!isSkipped)
+                    {
+                        AppLogger.Info("TwitchSelection", $"Checking remembered Twitch streamer (GQL) for general campaign '{campaign.Name}': {rememberedTwitchUrl}");
+                        bool? eligible = await IsTwitchStreamEligibleViaGqlAsync(rememberedLogin, campaign.Slug);
+                        if (eligible == true)
+                        {
+                            streamerUrl = rememberedTwitchUrl!;
+                            AppLogger.Info("TwitchSelection", $"Remembered Twitch streamer still eligible for general campaign '{campaign.Name}': {rememberedTwitchUrl}");
+                        }
+                        else
+                        {
+                            AppLogger.Info("TwitchSelection", $"Remembered Twitch streamer no longer eligible for general '{campaign.Name}': {rememberedTwitchUrl} (eligible={eligible?.ToString() ?? "unknown"}).");
+                        }
                     }
                 }
 
-                // Step 2: If no valid remembered → use category directory + pick first live streamer
+                // Step 2: otherwise pick the top live, drops-enabled channel from the game directory via GQL,
+                // honouring user "skip streamer" requests so the Switch button actually moves to a new channel.
+                if (string.IsNullOrWhiteSpace(streamerUrl))
+                {
+                    List<(string Login, int Viewers)> directory = await _twitchGqlService!.QueryLiveDirectoryChannelsAsync(campaign.Slug, 30);
+                    List<string> dirLogins = FilterSkippedLogins(Platform.Twitch, directory.Select(d => d.Login).ToList());
+                    dirLogins = ExcludeStalledLogins(Platform.Twitch, dirLogins);
+
+                    if (dirLogins.Count != 0)
+                    {
+                        streamerUrl = $"https://www.twitch.tv/{dirLogins[0]}";
+                        AppLogger.Info("TwitchSelection", $"Selected live directory streamer (GQL) for general '{campaign.Name}': {streamerUrl} ({dirLogins.Count} live).");
+                    }
+                    else
+                    {
+                        AppLogger.Warn("TwitchSelection", $"No live directory streamers (GQL) for general '{campaign.Name}'.");
+                    }
+                }
+
+                // Step 3: last-resort DOM directory scrape (only if GQL returned nothing, e.g. query rejected).
                 if (string.IsNullOrWhiteSpace(streamerUrl) && campaign.ConnectUrls?.Any() == true)
                 {
                     string directoryUrl = campaign.ConnectUrls[0];  // category/game directory page
-
-                    AppLogger.Info("TwitchSelection", $"Falling back to category directory for general campaign '{campaign.Name}': {directoryUrl}");
+                    AppLogger.Info("TwitchSelection", $"GQL directory empty; falling back to DOM directory for general '{campaign.Name}': {directoryUrl}");
 
                     await await Application.Current.Dispatcher.InvokeAsync(async () =>
                         await TwitchWebView!.NavigateAsync(directoryUrl));
-
-                    await Task.Delay(1500);  // Again - consider WaitForNetworkIdleAsync if timing issues occur
+                    await Task.Delay(1500);
 
                     string firstStreamerRawResult = await await Application.Current.Dispatcher.InvokeAsync(async () =>
                         await TwitchWebView!.ExecuteScriptAsync(getFirstStreamerJs));
 
                     streamerUrl = firstStreamerRawResult?.Trim().Trim('"') ?? string.Empty;
-
                     if (!string.IsNullOrWhiteSpace(streamerUrl))
-                    {
-                        AppLogger.Info("TwitchSelection", $"Selected first live streamer from directory for '{campaign.Name}': {streamerUrl}");
-                    }
-                    else
-                    {
-                        AppLogger.Warn("TwitchSelection", $"Failed to extract any first streamer from directory '{directoryUrl}' for general campaign '{campaign.Name}'");
-                    }
+                        AppLogger.Info("TwitchSelection", $"Selected first live streamer from DOM directory for '{campaign.Name}': {streamerUrl}");
+                }
+            }
+
+            // Reduce a non-root URL (e.g. .../videos/<id>) to the channel root; discard true category/directory
+            // URLs (watching them earns nothing). The online/eligibility gate below still rejects offline channels.
+            if (!string.IsNullOrWhiteSpace(streamerUrl) && !IsRealChannelUrl(streamerUrl))
+            {
+                if (TryNormalizeChannelUrl(Platform.Twitch, streamerUrl, out string normalized))
+                {
+                    AppLogger.Info("TwitchSelection", $"Normalised non-root URL to channel for '{campaign.Name}': {streamerUrl} -> {normalized}");
+                    streamerUrl = normalized;
+                }
+                else
+                {
+                    AppLogger.Warn("TwitchSelection", $"Resolved a non-channel URL for '{campaign.Name}' ({streamerUrl}); discarding so nothing fake is mined.");
+                    streamerUrl = string.Empty;
                 }
             }
 
@@ -2351,6 +3464,14 @@ namespace Core.Managers
         {
             if (string.IsNullOrWhiteSpace(campaignKey) || string.IsNullOrWhiteSpace(streamerUrl))
                 return;
+
+            // Never remember a category/directory/browse URL as a "streamer" — watching such a page earns no
+            // drops (the bug where Kick "watched" kick.com/category/irl and only ticked fake local progress).
+            if (!IsRealChannelUrl(streamerUrl))
+            {
+                AppLogger.Warn("Selection", $"Refusing to remember non-channel URL as streamer ({platform}): {streamerUrl}");
+                return;
+            }
 
             bool changed = false;
 

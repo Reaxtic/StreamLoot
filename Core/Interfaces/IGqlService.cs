@@ -46,6 +46,20 @@ namespace Core.Interfaces
         /// <param name="ct">Cancellation token.</param>
         /// <returns>Ordered list of channel login names that are live and streaming the correct game.</returns>
         Task<List<string>> QueryLiveChannelsBySlugAsync(IReadOnlyList<string> channelLogins, string gameSlug, CancellationToken ct = default);
+        /// <summary>
+        /// Like <see cref="QueryLiveChannelsBySlugAsync"/>, but also returns each live channel's current viewer count.
+        /// </summary>
+        Task<List<(string Login, int Viewers)>> QueryLiveChannelsWithViewersBySlugAsync(IReadOnlyList<string> channelLogins, string gameSlug, CancellationToken ct = default);
+        /// <summary>
+        /// Lists currently-live, drops-enabled channels in a game's directory (for "general" drop campaigns
+        /// not tied to specific channels), each with its current viewer count, sorted by viewers.
+        /// </summary>
+        Task<List<(string Login, int Viewers)>> QueryLiveDirectoryChannelsAsync(string gameSlug, int limit = 30, CancellationToken ct = default);
+        /// <summary>
+        /// Sends a single "minute-watched" event to Twitch's analytics endpoint to credit drop watch time for the
+        /// given live channel, independent of the embedded player actually decoding video.
+        /// </summary>
+        Task<bool> SendWatchHeartbeatAsync(string login, CancellationToken ct = default);
         string UserId { set; }
     }
 }

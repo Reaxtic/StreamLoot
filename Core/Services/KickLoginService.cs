@@ -31,8 +31,8 @@ namespace Core.Services
 
             UpdateStatus(ConnectionStatus.Validating);
 
-            string html = await GetPageHtmlAsync(host);
-            bool isLoggedIn = !html.Contains("data-testid=\"login\"", StringComparison.OrdinalIgnoreCase);
+            // The session_token cookie is the authoritative session signal (used for Kick API calls / claims).
+            bool isLoggedIn = await IsLoggedInByCookieAsync(host, "https://kick.com", "session_token");
 
             AppLogger.Info("KickLogin", $"Credential validation completed. isLoggedIn={isLoggedIn}");
 

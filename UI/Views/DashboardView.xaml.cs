@@ -21,12 +21,16 @@ namespace UI.Views
         // ALL campaigns (so co-progressing same-game campaigns are corrected and their finished drops get
         // claimed). Kept moderate because a refresh briefly navigates the (shared) WebViews away from the
         // watched stream; the live UI stays current between refreshes via same-game local ticking.
-        private readonly System.Timers.Timer _refreshTimer = new(TimeSpan.FromMinutes(20).TotalMilliseconds);
+        private readonly System.Timers.Timer _refreshTimer = new(TimeSpan.FromMinutes(60).TotalMilliseconds);
 
         private readonly SemaphoreSlim _loadDropsSemaphore = new(1, 1);
         private CancellationTokenSource? _currentLoadCts;
         private readonly object _loadTriggerLock = new();
         private bool _loadScheduled = false;
+        // Which platform(s) a pending (debounced) load should (re)start watching for. If more than one platform
+        // is pending, or a general refresh was requested, the scope is "both" (null).
+        private readonly HashSet<Platform> _pendingLoadPlatforms = new();
+        private bool _pendingLoadAll = false;
 
         private HiddenWebViewHost _twitchWebView = new();
         private HiddenWebViewHost _kickWebView = new();
@@ -250,27 +254,6 @@ namespace UI.Views
                 OnPropertyChanged();
             }
         }
-        private string _twitchStreamerCheckResult = string.Empty;
-        public string TwitchStreamerCheckResult
-        {
-            get => _twitchStreamerCheckResult;
-            set
-            {
-                _twitchStreamerCheckResult = value;
-                OnPropertyChanged();
-            }
-        }
-        private string _kickStreamerCheckResult = string.Empty;
-        public string KickStreamerCheckResult
-        {
-            get => _kickStreamerCheckResult;
-            set
-            {
-                _kickStreamerCheckResult = value;
-                OnPropertyChanged();
-            }
-        }
-
         private string _twitchStreamOnlineStatus = string.Empty;
         public string TwitchStreamOnlineStatus
         {
@@ -295,6 +278,24 @@ namespace UI.Views
         // Campaigns that earn simultaneously on the currently watched channel (general drops + same-channel campaigns).
         public ObservableCollection<CoMiningCampaign> KickAlsoMining { get; } = new ObservableCollection<CoMiningCampaign>();
         public ObservableCollection<CoMiningCampaign> TwitchAlsoMining { get; } = new ObservableCollection<CoMiningCampaign>();
+
+        // Pickable channels for the current campaign (loaded on demand via the "Channels" button).
+        public ObservableCollection<ChannelCandidate> TwitchChannels { get; } = new ObservableCollection<ChannelCandidate>();
+        public ObservableCollection<ChannelCandidate> KickChannels { get; } = new ObservableCollection<ChannelCandidate>();
+
+        private string _twitchChannelsStatus = "";
+        public string TwitchChannelsStatus
+        {
+            get => _twitchChannelsStatus;
+            set { _twitchChannelsStatus = value; OnPropertyChanged(); }
+        }
+
+        private string _kickChannelsStatus = "";
+        public string KickChannelsStatus
+        {
+            get => _kickChannelsStatus;
+            set { _kickChannelsStatus = value; OnPropertyChanged(); }
+        }
 
         private void RefreshAlsoMining()
         {
@@ -497,37 +498,41 @@ namespace UI.Views
             _refreshTimer.Start();
         }
 
-        private async void OnSwitchTwitchStreamerClick(object sender, RoutedEventArgs e)
-            => await DropsInventoryManager.Instance.SkipCurrentStreamerAsync(Platform.Twitch);
+        private async void OnTwitchChannelsClick(object sender, RoutedEventArgs e)
+            => await LoadChannelsAsync(Platform.Twitch, TwitchChannels, s => TwitchChannelsStatus = s);
 
-        private async void OnSwitchKickStreamerClick(object sender, RoutedEventArgs e)
-            => await DropsInventoryManager.Instance.SkipCurrentStreamerAsync(Platform.Kick);
+        private async void OnKickChannelsClick(object sender, RoutedEventArgs e)
+            => await LoadChannelsAsync(Platform.Kick, KickChannels, s => KickChannelsStatus = s);
 
-        private async void OnSetTwitchStreamerClick(object sender, RoutedEventArgs e)
+        private static async Task LoadChannelsAsync(Platform platform, ObservableCollection<ChannelCandidate> target, Action<string> setStatus)
         {
-            string value = TwitchStreamerInput.Text;
-            if (string.IsNullOrWhiteSpace(value))
-                return;
+            setStatus("Checking live channels…");
+            try
+            {
+                IReadOnlyList<ChannelCandidate> list = await DropsInventoryManager.Instance.GetChannelCandidatesAsync(platform);
+                target.Clear();
+                foreach (ChannelCandidate c in list)
+                    target.Add(c);
 
-            TwitchStreamerCheckResult = await DropsInventoryManager.Instance.CheckChannelForCampaignAsync(Platform.Twitch, value);
-            await DropsInventoryManager.Instance.SetPreferredStreamerAsync(Platform.Twitch, value);
+                int online = list.Count(c => c.Online);
+                setStatus(list.Count == 0
+                    ? "No channels available for this campaign right now."
+                    : $"{online} live • {list.Count} channel{(list.Count == 1 ? "" : "s")}");
+            }
+            catch
+            {
+                setStatus("Couldn't load channels.");
+            }
         }
 
-        private async void OnSetKickStreamerClick(object sender, RoutedEventArgs e)
+        private async void OnWatchChannelClick(object sender, RoutedEventArgs e)
         {
-            string value = KickStreamerInput.Text;
-            if (string.IsNullOrWhiteSpace(value))
-                return;
-
-            KickStreamerCheckResult = await DropsInventoryManager.Instance.CheckChannelForCampaignAsync(Platform.Kick, value);
-            await DropsInventoryManager.Instance.SetPreferredStreamerAsync(Platform.Kick, value);
+            if (sender is FrameworkElement fe && fe.DataContext is ChannelCandidate ch)
+            {
+                Platform platform = ch.Url.Contains("kick.com", StringComparison.OrdinalIgnoreCase) ? Platform.Kick : Platform.Twitch;
+                await DropsInventoryManager.Instance.SetPreferredStreamerAsync(platform, ch.Login);
+            }
         }
-
-        private async void OnCheckTwitchStreamerClick(object sender, RoutedEventArgs e)
-            => TwitchStreamerCheckResult = await DropsInventoryManager.Instance.CheckChannelForCampaignAsync(Platform.Twitch, TwitchStreamerInput.Text);
-
-        private async void OnCheckKickStreamerClick(object sender, RoutedEventArgs e)
-            => KickStreamerCheckResult = await DropsInventoryManager.Instance.CheckChannelForCampaignAsync(Platform.Kick, KickStreamerInput.Text);
         /// <summary>
         /// Schedules a debounced background load of drops, ensuring that rapid consecutive triggers result in a single
         /// load operation after a delay.
@@ -536,7 +541,7 @@ namespace UI.Views
         /// succession by introducing a 2-second debounce period. It is thread-safe and intended to be called when a
         /// load should be triggered, but only after a period of inactivity. The actual load is performed asynchronously
         /// on the background dispatcher priority.</remarks>
-        private void ScheduleDropsLoad()
+        private void ScheduleDropsLoad(Platform? platform = null)
         {
             // Block all loads until initial validation is done.
             if (!_initialValidationCompleted)
@@ -544,6 +549,12 @@ namespace UI.Views
 
             lock (_loadTriggerLock)
             {
+                // Accumulate the requested scope while debouncing. null = general refresh -> both platforms.
+                if (platform.HasValue)
+                    _pendingLoadPlatforms.Add(platform.Value);
+                else
+                    _pendingLoadAll = true;
+
                 if (_loadScheduled) return; // already scheduled
                 _loadScheduled = true;
             }
@@ -553,12 +564,20 @@ namespace UI.Views
             {
                 await Task.Delay(300); // absorb any rapid-fire triggers
 
+                Platform? scope;
                 lock (_loadTriggerLock)
                 {
                     _loadScheduled = false;
+                    // Scope to a single platform only when exactly one platform triggered the load and no
+                    // general refresh was requested; otherwise (re)start both.
+                    scope = (!_pendingLoadAll && _pendingLoadPlatforms.Count == 1)
+                        ? _pendingLoadPlatforms.First()
+                        : (Platform?)null;
+                    _pendingLoadPlatforms.Clear();
+                    _pendingLoadAll = false;
                 }
 
-                _ = LoadDropsAsync(); // safe - semaphore still protects concurrency
+                _ = LoadDropsAsync(scope); // safe - semaphore still protects concurrency
             }, DispatcherPriority.Background);
         }
         /// <summary>
@@ -570,7 +589,7 @@ namespace UI.Views
         /// loading fails. This method should be called when the application needs to refresh the list of available
         /// campaigns.</remarks>
         /// <returns>A task that represents the asynchronous operation of loading active drops campaigns.</returns>
-        private async Task LoadDropsAsync()
+        private async Task LoadDropsAsync(Platform? onlyPlatform = null)
         {
             // Cancel any previous in-flight load
             _currentLoadCts?.Cancel();
@@ -626,7 +645,9 @@ namespace UI.Views
             {
                 _loadDropsSemaphore.Release();
                 _currentLoadCts = null;
-                await DropsInventoryManager.Instance.ResumeWatchingAsync();
+                // Only (re)start the platform this load was scoped to, so refreshing/connecting one platform
+                // doesn't reset the other while it's still mining.
+                await DropsInventoryManager.Instance.ResumeWatchingAsync(onlyPlatform);
                 AppLogger.Info("Dashboard", "Watcher resumed after campaign refresh.");
             }
         }
@@ -652,6 +673,8 @@ namespace UI.Views
         /// <returns>A task that represents the asynchronous validation operation.</returns>
         private async Task ValidateCredentialsAsync()
         {
+            // Validate sequentially: the two WebViews share a CDP/WebView2 environment and running both
+            // credential checks concurrently raced (intermittently both returned "not logged in").
             if (_twitchService.Status != ConnectionStatus.Connected)
                 await ValidateTwitchCredentialsAsync();
 
@@ -709,7 +732,7 @@ namespace UI.Views
                     KickConnectionStatus = "Connected";
                     KickConnectionColor = "Lime";
                     KickLoginButton.IsEnabled = false; // disable when already logged in
-                    ScheduleDropsLoad();
+                    ScheduleDropsLoad(Platform.Kick); // start Kick only — don't reset Twitch if it's already mining
                     break;
                 case ConnectionStatus.Connecting:
                     KickConnectionStatus = "Connecting...";
@@ -744,7 +767,7 @@ namespace UI.Views
                     TwitchConnectionStatus = "Connected";
                     TwitchConnectionColor = "Lime";
                     TwitchLoginButton.IsEnabled = false; // disable when already logged in
-                    ScheduleDropsLoad();
+                    ScheduleDropsLoad(Platform.Twitch); // start Twitch only — don't reset Kick if it's already mining
                     break;
                 case ConnectionStatus.Connecting:
                     TwitchConnectionStatus = "Connecting...";
@@ -761,8 +784,11 @@ namespace UI.Views
         /// <param name="e">The event data associated with the Click event.</param>
         private void OnKickLoginClick(object sender, RoutedEventArgs e)
         {
-            new KickLoginWindow().ShowDialog();
-            _ = ValidateKickCredentialsAsync();
+            // Non-modal so the Twitch and Kick login windows can be open at the same time (log in to both in
+            // parallel instead of one-after-another). Re-validate once this window is closed.
+            KickLoginWindow window = new KickLoginWindow();
+            window.Closed += async (_, _) => await ValidateKickCredentialsAsync();
+            window.Show();
         }
         /// <summary>
         /// Handles the Click event for the Twitch login button, displaying the Twitch login window and initiating
@@ -772,8 +798,11 @@ namespace UI.Views
         /// <param name="e">The event data associated with the click event.</param>
         private void OnTwitchLoginClick(object sender, RoutedEventArgs e)
         {
-            new TwitchLoginWindow().ShowDialog();
-            _ = ValidateTwitchCredentialsAsync();
+            // Non-modal so the Twitch and Kick login windows can be open at the same time (log in to both in
+            // parallel instead of one-after-another). Re-validate once this window is closed.
+            TwitchLoginWindow window = new TwitchLoginWindow();
+            window.Closed += async (_, _) => await ValidateTwitchCredentialsAsync();
+            window.Show();
         }
         #endregion
     }

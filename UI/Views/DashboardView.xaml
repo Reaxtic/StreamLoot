@@ -39,6 +39,73 @@
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
         </Style>
+
+        <!-- Clickable channel row in the channel picker -->
+        <Style x:Key="ChannelRowButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="ToolTip" Value="Watch this channel for the current campaign"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="b" Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="b" Property="Background" Value="{DynamicResource SidebarHoverBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Channel picker list (shared template via DataTemplate) -->
+        <DataTemplate x:Key="ChannelRowTemplate">
+            <Button Style="{StaticResource ChannelRowButton}" Click="OnWatchChannelClick">
+                <DockPanel LastChildFill="True">
+                    <Ellipse Width="8" Height="8" VerticalAlignment="Center" Margin="0,0,9,0" DockPanel.Dock="Left">
+                        <Ellipse.Style>
+                            <Style TargetType="Ellipse">
+                                <Setter Property="Fill" Value="#5C6470"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Online}" Value="True">
+                                        <Setter Property="Fill" Value="#00E676"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Ellipse.Style>
+                    </Ellipse>
+                    <!-- Live viewer count / offline label on the right -->
+                    <TextBlock DockPanel.Dock="Right" VerticalAlignment="Center" FontSize="11" Margin="10,0,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="#5C6470"/>
+                                <Setter Property="Text" Value="offline"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Online}" Value="True">
+                                        <Setter Property="Foreground" Value="#00E676"/>
+                                        <Setter Property="Text" Value="{Binding Viewers, StringFormat='{}{0:N0} watching'}"/>
+                                    </DataTrigger>
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding Online}" Value="True"/>
+                                            <Condition Binding="{Binding Viewers}" Value="0"/>
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter Property="Text" Value="live"/>
+                                    </MultiDataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock Text="{Binding Login}" Foreground="{DynamicResource TextPrimaryBrush}" FontSize="13" VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis"/>
+                </DockPanel>
+            </Button>
+        </DataTemplate>
     </UserControl.Resources>
 
     <Grid Margin="24,20,24,24">
@@ -230,34 +297,32 @@
                             <TextBlock Margin="0,16,0,0" Visibility="{Binding TwitchWatchedChannel, Converter={StaticResource StringToVisibilityConverter}}">
                                 <Run Text="Watching: " Foreground="{DynamicResource TextSecondaryBrush}"/>
                                 <Run Text="{Binding TwitchWatchedChannel}" FontWeight="SemiBold" Foreground="{DynamicResource TwitchBrush}"/>
-                                <Run Text="  "/><Run FontWeight="SemiBold">
-                                    <Run.Style>
-                                        <Style TargetType="Run">
-                                            <Setter Property="Text" Value=""/>
+                            </TextBlock>
+
+                            <!-- Channel picker (pick a live channel to watch / switch streamer) -->
+                            <StackPanel Margin="0,12,0,0" Visibility="{Binding TwitchWatchedChannel, Converter={StaticResource StringToVisibilityConverter}}">
+                                <Button Content="⟳  Show live channels" Click="OnTwitchChannelsClick"
+                                        Style="{StaticResource AccentButtonStyle}" Padding="12,6" HorizontalAlignment="Left"
+                                        ToolTip="List live channels for this campaign and click one to switch to it"/>
+                                <TextBlock Text="{Binding TwitchChannelsStatus}" Margin="2,6,0,0" FontSize="12"
+                                           Foreground="{DynamicResource TextMutedBrush}"
+                                           Visibility="{Binding TwitchChannelsStatus, Converter={StaticResource StringToVisibilityConverter}}"/>
+                                <Border Margin="0,8,0,0" CornerRadius="8" Background="{DynamicResource MainBackgroundBrush}"
+                                        BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
                                             <Style.Triggers>
-                                                <DataTrigger Binding="{Binding TwitchStreamOnlineStatus}" Value="online">
-                                                    <Setter Property="Text" Value="● online"/><Setter Property="Foreground" Value="#00E676"/>
-                                                </DataTrigger>
-                                                <DataTrigger Binding="{Binding TwitchStreamOnlineStatus}" Value="offline">
-                                                    <Setter Property="Text" Value="● offline"/><Setter Property="Foreground" Value="#FF5252"/>
+                                                <DataTrigger Binding="{Binding TwitchChannels.Count}" Value="0">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
                                                 </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
-                                    </Run.Style>
-                                </Run>
-                            </TextBlock>
-
-                            <StackPanel Orientation="Horizontal" Margin="0,10,0,0"
-                                        Visibility="{Binding TwitchWatchedChannel, Converter={StaticResource StringToVisibilityConverter}}">
-                                <Button Content="Switch" Click="OnSwitchTwitchStreamerClick" Style="{StaticResource AccentButtonStyle}" Padding="12,6" Margin="0,0,8,0"/>
-                                <TextBox x:Name="TwitchStreamerInput" Width="110" VerticalContentAlignment="Center" ToolTip="Channel name or URL"/>
-                                <Button Content="Check" Click="OnCheckTwitchStreamerClick" Style="{StaticResource AccentButtonStyle}" Padding="12,6" Margin="8,0,0,0"/>
-                                <Button Content="Set" Click="OnSetTwitchStreamerClick" Style="{StaticResource AccentButtonStyle}" Padding="12,6" Margin="8,0,0,0"/>
+                                    </Border.Style>
+                                    <ScrollViewer MaxHeight="170" VerticalScrollBarVisibility="Auto" Padding="4">
+                                        <ItemsControl ItemsSource="{Binding TwitchChannels}" ItemTemplate="{StaticResource ChannelRowTemplate}"/>
+                                    </ScrollViewer>
+                                </Border>
                             </StackPanel>
-
-                            <TextBlock Text="{Binding TwitchStreamerCheckResult}" TextWrapping="Wrap" Margin="0,8,0,0"
-                                       FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
-                                       Visibility="{Binding TwitchStreamerCheckResult, Converter={StaticResource StringToVisibilityConverter}}"/>
 
                             <!-- Also earning -->
                             <StackPanel Margin="0,16,0,0">
@@ -375,34 +440,32 @@
                             <TextBlock Margin="0,16,0,0" Visibility="{Binding KickWatchedChannel, Converter={StaticResource StringToVisibilityConverter}}">
                                 <Run Text="Watching: " Foreground="{DynamicResource TextSecondaryBrush}"/>
                                 <Run Text="{Binding KickWatchedChannel}" FontWeight="SemiBold" Foreground="{DynamicResource KickBrush}"/>
-                                <Run Text="  "/><Run FontWeight="SemiBold">
-                                    <Run.Style>
-                                        <Style TargetType="Run">
-                                            <Setter Property="Text" Value=""/>
+                            </TextBlock>
+
+                            <!-- Channel picker (pick a live channel to watch / switch streamer) -->
+                            <StackPanel Margin="0,12,0,0" Visibility="{Binding KickWatchedChannel, Converter={StaticResource StringToVisibilityConverter}}">
+                                <Button Content="⟳  Show channels" Click="OnKickChannelsClick"
+                                        Style="{StaticResource AccentButtonStyle}" Padding="12,6" HorizontalAlignment="Left"
+                                        ToolTip="List channels for this campaign and click one to switch to it"/>
+                                <TextBlock Text="{Binding KickChannelsStatus}" Margin="2,6,0,0" FontSize="12"
+                                           Foreground="{DynamicResource TextMutedBrush}"
+                                           Visibility="{Binding KickChannelsStatus, Converter={StaticResource StringToVisibilityConverter}}"/>
+                                <Border Margin="0,8,0,0" CornerRadius="8" Background="{DynamicResource MainBackgroundBrush}"
+                                        BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
                                             <Style.Triggers>
-                                                <DataTrigger Binding="{Binding KickStreamOnlineStatus}" Value="online">
-                                                    <Setter Property="Text" Value="● online"/><Setter Property="Foreground" Value="#00E676"/>
-                                                </DataTrigger>
-                                                <DataTrigger Binding="{Binding KickStreamOnlineStatus}" Value="offline">
-                                                    <Setter Property="Text" Value="● offline"/><Setter Property="Foreground" Value="#FF5252"/>
+                                                <DataTrigger Binding="{Binding KickChannels.Count}" Value="0">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
                                                 </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
-                                    </Run.Style>
-                                </Run>
-                            </TextBlock>
-
-                            <StackPanel Orientation="Horizontal" Margin="0,10,0,0"
-                                        Visibility="{Binding KickWatchedChannel, Converter={StaticResource StringToVisibilityConverter}}">
-                                <Button Content="Switch" Click="OnSwitchKickStreamerClick" Style="{StaticResource AccentButtonStyle}" Padding="12,6" Margin="0,0,8,0"/>
-                                <TextBox x:Name="KickStreamerInput" Width="110" VerticalContentAlignment="Center" ToolTip="Channel name or URL"/>
-                                <Button Content="Check" Click="OnCheckKickStreamerClick" Style="{StaticResource AccentButtonStyle}" Padding="12,6" Margin="8,0,0,0"/>
-                                <Button Content="Set" Click="OnSetKickStreamerClick" Style="{StaticResource AccentButtonStyle}" Padding="12,6" Margin="8,0,0,0"/>
+                                    </Border.Style>
+                                    <ScrollViewer MaxHeight="170" VerticalScrollBarVisibility="Auto" Padding="4">
+                                        <ItemsControl ItemsSource="{Binding KickChannels}" ItemTemplate="{StaticResource ChannelRowTemplate}"/>
+                                    </ScrollViewer>
+                                </Border>
                             </StackPanel>
-
-                            <TextBlock Text="{Binding KickStreamerCheckResult}" TextWrapping="Wrap" Margin="0,8,0,0"
-                                       FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
-                                       Visibility="{Binding KickStreamerCheckResult, Converter={StaticResource StringToVisibilityConverter}}"/>
 
                             <!-- Also earning -->
                             <StackPanel Margin="0,16,0,0">

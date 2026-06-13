@@ -7,6 +7,7 @@ using Core.Logging;
 using Core.Managers;
 using System.Net;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.IO;
 
 namespace Core.Services
@@ -21,6 +22,11 @@ namespace Core.Services
         private string? _deviceId;
         private string? _accessToken;
         private string? _userId;
+
+        // Watch heartbeat ("minute-watched") state — credits drop watch time directly via Twitch's analytics
+        // endpoint, the way DevilXD's miner does, instead of relying on the hidden player actually decoding video.
+        private string? _spadeUrl;
+        private (string Login, string ChannelId, string BroadcastId, DateTime Fetched)? _streamIdCache;
 
         // Header (Client-Integrity etc.) caching. Capturing these requires a full
         // navigation of the heavy Twitch SPA in the hidden WebView, so we avoid
@@ -390,6 +396,310 @@ namespace Core.Services
 
             AppLogger.Info("TwitchGql", $"QueryLiveChannelsBySlug completed. liveMatches={liveMatches.Count}/{channelLogins.Count}");
             return liveMatches;
+        }
+
+        /// <summary>
+        /// Like <see cref="QueryLiveChannelsBySlugAsync"/>, but also returns each live channel's current viewer count.
+        /// Uses a raw GraphQL query (users(logins:)) batched in groups of 30, sorted by viewers.
+        /// </summary>
+        public async Task<List<(string Login, int Viewers)>> QueryLiveChannelsWithViewersBySlugAsync(IReadOnlyList<string> channelLogins, string gameSlug, CancellationToken ct = default)
+        {
+            if (channelLogins == null || channelLogins.Count == 0 || string.IsNullOrWhiteSpace(gameSlug))
+                return new List<(string, int)>();
+
+            if (_clientId == null || _integrityToken == null)
+                await RefreshHeadersAsync(ct);
+
+            // Use the same reliable persisted StreamMetadata query as the eligibility check (raw GraphQL queries
+            // are rejected by Twitch's integrity enforcement). viewersCount is read defensively: when the persisted
+            // response includes it the picker shows a live viewer number, otherwise it falls back to a "live" label.
+            const string operationName = "StreamMetadata";
+            const string hash = "b57f9b910f8cd1a4659d894fe7550ccc81ec9052c01e438b290fd66a040b9b93";
+            const int batchSize = 30;
+            SetCachedHash(operationName, hash);
+
+            List<(string, int)> result = new();
+            HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
+
+            for (int i = 0; i < channelLogins.Count; i += batchSize)
+            {
+                List<string> batch = channelLogins.Skip(i).Take(batchSize).ToList();
+
+                JsonArray payload = new();
+                foreach (string login in batch)
+                {
+                    payload.Add(new JsonObject
+                    {
+                        ["operationName"] = operationName,
+                        ["variables"] = new JsonObject { ["channelLogin"] = login, ["includeIsDJ"] = true },
+                        ["extensions"] = new JsonObject
+                        {
+                            ["persistedQuery"] = new JsonObject { ["version"] = 1, ["sha256Hash"] = hash }
+                        }
+                    });
+                }
+
+                async Task<HttpResponseMessage> SendBatchAsync()
+                {
+                    HttpRequestMessage request = new(HttpMethod.Post, "https://gql.twitch.tv/gql")
+                    {
+                        Content = JsonContent.Create(payload)
+                    };
+                    request.Headers.TryAddWithoutValidation("Client-ID", _clientId);
+                    request.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
+                    request.Headers.TryAddWithoutValidation("Authorization", _accessToken);
+                    if (!string.IsNullOrEmpty(_deviceId))
+                        request.Headers.TryAddWithoutValidation("X-Device-Id", _deviceId);
+                    return await _httpClient.SendAsync(request, ct);
+                }
+
+                try
+                {
+                    HttpResponseMessage response = await SendBatchAsync();
+                    string jsonText = await response.Content.ReadAsStringAsync(ct);
+
+                    if (!response.IsSuccessStatusCode || jsonText.Contains("\"errors\""))
+                    {
+                        await RefreshHeadersAsync(ct, force: true);
+                        response = await SendBatchAsync();
+                        jsonText = await response.Content.ReadAsStringAsync(ct);
+                    }
+
+                    if (!response.IsSuccessStatusCode)
+                        continue;
+
+                    JsonArray responseArray = JsonNode.Parse(jsonText)!.AsArray();
+                    for (int j = 0; j < batch.Count; j++)
+                    {
+                        JsonNode? stream = responseArray[j]?["data"]?["user"]?["stream"];
+                        if (stream == null)
+                            continue;
+
+                        string? type = stream["type"]?.GetValue<string>();
+                        string? slug = stream["game"]?["slug"]?.GetValue<string>();
+                        int viewers = stream["viewersCount"]?.GetValue<int>() ?? 0;
+
+                        if (type == "live" && string.Equals(slug, gameSlug, StringComparison.OrdinalIgnoreCase) && seen.Add(batch[j]))
+                            result.Add((batch[j], viewers));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn("TwitchGql", $"QueryLiveChannelsWithViewers batch failed at offset={i}: {ex.Message}");
+                }
+            }
+
+            result.Sort((a, b) => b.Item2.CompareTo(a.Item2));
+            AppLogger.Info("TwitchGql", $"QueryLiveChannelsWithViewers completed. live={result.Count}/{channelLogins.Count}, slug={gameSlug}");
+            return result;
+        }
+
+        /// <summary>
+        /// Lists currently-LIVE, drops-enabled channels in a game's directory (used for "general" drop campaigns
+        /// that aren't tied to specific channels). Returns each channel's login and current viewer count, sorted by viewers.
+        /// </summary>
+        public async Task<List<(string Login, int Viewers)>> QueryLiveDirectoryChannelsAsync(string gameSlug, int limit = 30, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(gameSlug))
+                return new List<(string, int)>();
+
+            if (_clientId == null || _integrityToken == null)
+                await RefreshHeadersAsync(ct);
+
+            // Raw GraphQL query (not persisted): the game directory filtered to live drops-enabled streams, by viewers.
+            const string query = "query StreamLootDirectory($slug: String!, $limit: Int!) { " +
+                "game(slug: $slug) { streams(first: $limit, options: { sort: VIEWER_COUNT, systemFilters: [DROPS_ENABLED] }) { " +
+                "edges { node { viewersCount broadcaster { login } } } } } }";
+
+            JsonObject payload = new()
+            {
+                ["operationName"] = "StreamLootDirectory",
+                ["query"] = query,
+                ["variables"] = new JsonObject { ["slug"] = gameSlug, ["limit"] = Math.Clamp(limit, 1, 60) }
+            };
+
+            async Task<HttpResponseMessage> SendAsync()
+            {
+                HttpRequestMessage request = new(HttpMethod.Post, "https://gql.twitch.tv/gql")
+                {
+                    Content = JsonContent.Create(payload)
+                };
+                request.Headers.TryAddWithoutValidation("Client-ID", _clientId);
+                request.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
+                request.Headers.TryAddWithoutValidation("Authorization", _accessToken);
+                if (!string.IsNullOrEmpty(_deviceId))
+                    request.Headers.TryAddWithoutValidation("X-Device-Id", _deviceId);
+                return await _httpClient.SendAsync(request, ct);
+            }
+
+            try
+            {
+                HttpResponseMessage response = await SendAsync();
+                string jsonText = await response.Content.ReadAsStringAsync(ct);
+
+                if (!response.IsSuccessStatusCode || jsonText.Contains("\"errors\""))
+                {
+                    AppLogger.Warn("TwitchGql", "QueryLiveDirectoryChannels failed; refreshing headers and retrying.");
+                    await RefreshHeadersAsync(ct, force: true);
+                    response = await SendAsync();
+                    jsonText = await response.Content.ReadAsStringAsync(ct);
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    AppLogger.Warn("TwitchGql", $"QueryLiveDirectoryChannels HTTP {(int)response.StatusCode}.");
+                    return new List<(string, int)>();
+                }
+
+                JsonNode? root = JsonNode.Parse(jsonText);
+                JsonArray? edges = root?["data"]?["game"]?["streams"]?["edges"]?.AsArray();
+                if (edges == null)
+                {
+                    AppLogger.Warn("TwitchGql", "QueryLiveDirectoryChannels returned no edges.");
+                    return new List<(string, int)>();
+                }
+
+                List<(string, int)> result = new();
+                HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
+                foreach (JsonNode? edge in edges)
+                {
+                    string? login = edge?["node"]?["broadcaster"]?["login"]?.GetValue<string>();
+                    int viewers = edge?["node"]?["viewersCount"]?.GetValue<int>() ?? 0;
+                    if (!string.IsNullOrWhiteSpace(login) && seen.Add(login))
+                        result.Add((login, viewers));
+                }
+
+                AppLogger.Info("TwitchGql", $"QueryLiveDirectoryChannels completed. slug={gameSlug}, live={result.Count}");
+                return result;
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("TwitchGql", $"QueryLiveDirectoryChannels exception: {ex.Message}");
+                return new List<(string, int)>();
+            }
+        }
+
+        /// <summary>
+        /// Sends a single "minute-watched" analytics event to Twitch's spade endpoint for the given live channel.
+        /// This is how drop watch time is actually credited server-side (DevilXD's approach), so progress accrues
+        /// even when the hidden embedded player isn't decoding video. Returns true if the event was accepted.
+        /// </summary>
+        public async Task<bool> SendWatchHeartbeatAsync(string login, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(login) || string.IsNullOrWhiteSpace(_userId))
+                return false;
+
+            try
+            {
+                if (_clientId == null || _integrityToken == null)
+                    await RefreshHeadersAsync(ct);
+
+                (string ChannelId, string BroadcastId)? ids = await GetStreamIdsAsync(login, ct);
+                if (ids == null)
+                {
+                    AppLogger.Debug("TwitchWatch", $"No live stream id for '{login}'; heartbeat skipped.");
+                    return false;
+                }
+
+                string? spade = await GetSpadeUrlAsync(login, ct);
+                if (string.IsNullOrWhiteSpace(spade))
+                    return false;
+
+                // channel_id / broadcast_id / user_id must be JSON NUMBERS (not strings) for the drops backend to
+                // count the event — otherwise spade still answers 204 but the watch time is ignored.
+                string json = "[{\"event\":\"minute-watched\",\"properties\":{" +
+                              $"\"channel_id\":{ids.Value.ChannelId}," +
+                              $"\"broadcast_id\":{ids.Value.BroadcastId}," +
+                              "\"player\":\"site\"," +
+                              $"\"user_id\":{_userId}}}}}]";
+                string b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(json));
+
+                using FormUrlEncodedContent content = new(new[] { new KeyValuePair<string, string>("data", b64) });
+                using HttpRequestMessage req = new(HttpMethod.Post, spade) { Content = content };
+                HttpResponseMessage resp = await _httpClient.SendAsync(req, ct);
+
+                AppLogger.Info("TwitchWatch", $"minute-watched '{login}' (ch={ids.Value.ChannelId}, b={ids.Value.BroadcastId}) -> HTTP {(int)resp.StatusCode}.");
+                return resp.IsSuccessStatusCode;
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("TwitchWatch", $"Watch heartbeat failed for '{login}': {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>Gets the channel id and current broadcast (stream) id for a login via the persisted StreamMetadata query; null if offline.</summary>
+        private async Task<(string ChannelId, string BroadcastId)?> GetStreamIdsAsync(string login, CancellationToken ct)
+        {
+            if (_streamIdCache is { } cache && string.Equals(cache.Login, login, StringComparison.OrdinalIgnoreCase)
+                && (DateTime.Now - cache.Fetched).TotalSeconds < 50)
+                return (cache.ChannelId, cache.BroadcastId);
+
+            const string operationName = "StreamMetadata";
+            const string hash = "b57f9b910f8cd1a4659d894fe7550ccc81ec9052c01e438b290fd66a040b9b93";
+            SetCachedHash(operationName, hash);
+
+            JsonArray payload = new()
+            {
+                new JsonObject
+                {
+                    ["operationName"] = operationName,
+                    ["variables"] = new JsonObject { ["channelLogin"] = login, ["includeIsDJ"] = true },
+                    ["extensions"] = new JsonObject { ["persistedQuery"] = new JsonObject { ["version"] = 1, ["sha256Hash"] = hash } }
+                }
+            };
+
+            using HttpRequestMessage request = new(HttpMethod.Post, "https://gql.twitch.tv/gql") { Content = JsonContent.Create(payload) };
+            request.Headers.TryAddWithoutValidation("Client-ID", _clientId);
+            request.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
+            request.Headers.TryAddWithoutValidation("Authorization", _accessToken);
+            if (!string.IsNullOrEmpty(_deviceId))
+                request.Headers.TryAddWithoutValidation("X-Device-Id", _deviceId);
+
+            HttpResponseMessage response = await _httpClient.SendAsync(request, ct);
+            string text = await response.Content.ReadAsStringAsync(ct);
+            if (!response.IsSuccessStatusCode)
+                return null;
+
+            JsonNode? user = JsonNode.Parse(text)?.AsArray().FirstOrDefault()?["data"]?["user"];
+            string? channelId = user?["id"]?.GetValue<string>();
+            string? broadcastId = user?["stream"]?["id"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(channelId) || string.IsNullOrWhiteSpace(broadcastId))
+                return null;
+
+            _streamIdCache = (login, channelId!, broadcastId!, DateTime.Now);
+            return (channelId!, broadcastId!);
+        }
+
+        /// <summary>Resolves Twitch's spade analytics URL (cached), reading it from the site config; falls back to the known endpoint.</summary>
+        private async Task<string?> GetSpadeUrlAsync(string login, CancellationToken ct)
+        {
+            if (!string.IsNullOrWhiteSpace(_spadeUrl))
+                return _spadeUrl;
+
+            try
+            {
+                string page = await _httpClient.GetStringAsync($"https://www.twitch.tv/{login}", ct);
+                Match settings = Regex.Match(page, @"https://(?:static\.twitchcdn\.net|assets\.twitch\.tv)/config/settings\.[0-9a-f]+\.js");
+                if (settings.Success)
+                {
+                    string settingsJs = await _httpClient.GetStringAsync(settings.Value, ct);
+                    Match spade = Regex.Match(settingsJs, "\"spade_url\":\"(https://[^\"]+)\"");
+                    if (spade.Success)
+                    {
+                        _spadeUrl = spade.Groups[1].Value;
+                        AppLogger.Info("TwitchWatch", $"Resolved spade URL: {_spadeUrl}");
+                        return _spadeUrl;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("TwitchWatch", $"Spade URL resolution failed, using fallback: {ex.Message}");
+            }
+
+            _spadeUrl = "https://spade.twitch.tv/track"; // long-stable fallback endpoint
+            return _spadeUrl;
         }
         /// <summary>
         /// Attempts to claim a Twitch drop reward for the specified campaign and reward identifiers asynchronously.

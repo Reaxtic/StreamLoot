@@ -22,13 +22,30 @@
                    FontWeight="Bold"
                    HorizontalAlignment="Left"
                    Foreground="{DynamicResource TextPrimaryBrush}"/>
-            <Button Content="Auto (mine by priority)"
-                    HorizontalAlignment="Right"
-                    VerticalAlignment="Center"
-                    Padding="12,6"
-                    Click="OnAutoMineClick"
-                    Style="{StaticResource AccentButtonStyle}"
-                    ToolTip="Clear any pinned campaign and select automatically"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                <CheckBox x:Name="HideClaimedToggle" Content="Hide claimed"
+                          VerticalAlignment="Center" Margin="0,0,12,0"
+                          Foreground="{DynamicResource TextSecondaryBrush}"
+                          Checked="OnHideClaimedChanged" Unchecked="OnHideClaimedChanged"
+                          ToolTip="Hide campaigns whose drops are all already claimed"/>
+                <CheckBox x:Name="OnlyAvailableToggle" Content="Show only available"
+                          VerticalAlignment="Center" Margin="0,0,12,0"
+                          Foreground="{DynamicResource TextSecondaryBrush}"
+                          Checked="OnOnlyAvailableChanged" Unchecked="OnOnlyAvailableChanged"
+                          ToolTip="Hide campaigns whose listed channels are all offline right now"/>
+                <Button Content="⟳"
+                        VerticalAlignment="Center"
+                        Padding="10,6" Margin="0,0,12,0"
+                        Click="OnRefreshAvailabilityClick"
+                        Style="{StaticResource AccentButtonStyle}"
+                        ToolTip="Re-check which campaigns have live streamers"/>
+                <Button Content="Auto (mine by priority)"
+                        VerticalAlignment="Center"
+                        Padding="12,6"
+                        Click="OnAutoMineClick"
+                        Style="{StaticResource AccentButtonStyle}"
+                        ToolTip="Clear any pinned campaign and select automatically"/>
+            </StackPanel>
         </Grid>
 
         <!-- CAMPAIGNS LIST -->
@@ -138,6 +155,63 @@
                                             </TextBlock>
                                         </Border>
 
+                                        <!-- Availability badge -->
+                                        <Border CornerRadius="6" Padding="10,4" Margin="8,0,0,0" VerticalAlignment="Center">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Background" Value="#33888888"/>
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Availability}" Value="Available">
+                                                            <Setter Property="Background" Value="#3300E676"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Availability}" Value="Unavailable">
+                                                            <Setter Property="Background" Value="#33FF5252"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Availability}" Value="Category">
+                                                            <Setter Property="Background" Value="#3322D3EE"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <StackPanel Orientation="Horizontal">
+                                                <Ellipse Width="7" Height="7" VerticalAlignment="Center" Margin="0,0,6,0">
+                                                    <Ellipse.Style>
+                                                        <Style TargetType="Ellipse">
+                                                            <Setter Property="Fill" Value="#5C6470"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Availability}" Value="Available">
+                                                                    <Setter Property="Fill" Value="#00E676"/>
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding Availability}" Value="Category">
+                                                                    <Setter Property="Fill" Value="#22D3EE"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Ellipse.Style>
+                                                </Ellipse>
+                                                <TextBlock FontWeight="SemiBold" FontSize="11" VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource TextPrimaryBrush}">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Text" Value="Checking…"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Availability}" Value="Available">
+                                                                    <Setter Property="Text" Value="{Binding OnlineChannels, StringFormat='{}{0} streamer(s) online'}"/>
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding Availability}" Value="Unavailable">
+                                                                    <Setter Property="Text" Value="No streamers online"/>
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding Availability}" Value="Category">
+                                                                    <Setter Property="Text" Value="Category drop"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </Border>
+
                                         <TextBlock Margin="15,0,0,0" Foreground="#FF6666">
                                             <Run Text="Ends "/>
                                             <Run Text="{Binding EndsAt, StringFormat=MMM dd • HH:mm}"/>
@@ -155,12 +229,33 @@
                                                        Foreground="{DynamicResource MainBackgroundBrush}"/>
                                         </Border>
 
-                                        <!-- Force-mine this campaign -->
-                                        <Button Content="Mine this"
-                                                Margin="12,0,0,0"
+                                        <!-- PINNED Badge -->
+                                        <Border Margin="8,0,0,0"
+                                                CornerRadius="6"
+                                                Padding="8,4"
+                                                Background="#22D3EE"
+                                                Visibility="{Binding IsPinned, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                            <TextBlock Text="📌 PINNED"
+                                                       FontWeight="Bold"
+                                                       FontSize="10"
+                                                       Foreground="Black"/>
+                                        </Border>
+
+                                        <!-- Pin / Unpin this campaign (toggles _forcedCampaignId) -->
+                                        <Button Margin="12,0,0,0"
                                                 Padding="10,4"
-                                                Click="OnMineThisClick"
-                                                Style="{StaticResource AccentButtonStyle}"/>
+                                                Click="OnMineThisClick">
+                                            <Button.Style>
+                                                <Style TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
+                                                    <Setter Property="Content" Value="Mine this"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsPinned}" Value="True">
+                                                            <Setter Property="Content" Value="Unpin"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
+                                        </Button>
                                     </StackPanel>
                                 </StackPanel>
 
