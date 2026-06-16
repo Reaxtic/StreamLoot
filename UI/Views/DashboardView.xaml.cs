@@ -23,6 +23,12 @@ namespace UI.Views
         // watched stream; the live UI stays current between refreshes via same-game local ticking.
         private readonly System.Timers.Timer _refreshTimer = new(TimeSpan.FromMinutes(60).TotalMilliseconds);
 
+        // When a Twitch campaign fetch fails on Twitch's integrity check (transient — "please wait a while"), retry
+        // soon with a short backoff instead of leaving Twitch empty until the next hourly refresh.
+        private readonly System.Timers.Timer _twitchRetryTimer = new() { AutoReset = false };
+        private int _twitchRetryCount;
+        private static readonly int[] _twitchRetryDelaysSec = { 90, 180, 360 };
+
         private readonly SemaphoreSlim _loadDropsSemaphore = new(1, 1);
         private CancellationTokenSource? _currentLoadCts;
         private readonly object _loadTriggerLock = new();
@@ -496,6 +502,45 @@ namespace UI.Views
             _refreshTimer.Elapsed += async (s, e) => await Dispatcher.InvokeAsync(() => ScheduleDropsLoad());
             _refreshTimer.AutoReset = true; // Run forever
             _refreshTimer.Start();
+
+            // Retry just Twitch (not Kick) after a transient integrity failure.
+            _twitchRetryTimer.Elapsed += async (s, e) => await Dispatcher.InvokeAsync(() =>
+            {
+                AppLogger.Info("Dashboard", $"Retrying Twitch campaign load after integrity failure (attempt {_twitchRetryCount}).");
+                ScheduleDropsLoad(Platform.Twitch);
+            });
+        }
+
+        /// <summary>
+        /// Looks at the result of the just-completed load: if Twitch is connected but its campaign fetch failed
+        /// (integrity), schedule a soon, Twitch-only retry with a short backoff. Resets the backoff on success.
+        /// </summary>
+        private void HandleTwitchFetchOutcome(Platform? loadedScope)
+        {
+            // Only act when this load actually fetched Twitch.
+            if (loadedScope == Platform.Kick || _twitchService.Status != ConnectionStatus.Connected || _twitchGqlService == null)
+                return;
+
+            if (_twitchGqlService.LastDashboardFetchFailed)
+            {
+                if (_twitchRetryCount >= _twitchRetryDelaysSec.Length)
+                {
+                    AppLogger.Warn("Dashboard", "Twitch still failing integrity after retries; leaving it for the next full refresh.");
+                    return;
+                }
+                int delaySec = _twitchRetryDelaysSec[_twitchRetryCount];
+                _twitchRetryCount++;
+                _twitchRetryTimer.Stop();
+                _twitchRetryTimer.Interval = TimeSpan.FromSeconds(delaySec).TotalMilliseconds;
+                _twitchRetryTimer.Start();
+                AppLogger.Warn("Dashboard", $"Twitch campaign fetch failed integrity — retrying in {delaySec}s (attempt {_twitchRetryCount}/{_twitchRetryDelaysSec.Length}).");
+            }
+            else
+            {
+                // Twitch loaded fine — clear any pending backoff.
+                _twitchRetryCount = 0;
+                _twitchRetryTimer.Stop();
+            }
         }
 
         private async void OnTwitchChannelsClick(object sender, RoutedEventArgs e)
@@ -625,6 +670,10 @@ namespace UI.Views
                     _activeCampaigns.Add(c);
 
                 DropsInventoryManager.Instance.UpdateCampaigns(allCampaigns, _twitchGqlService, startWatching: false);
+
+                // If Twitch silently returned nothing because of a transient integrity failure, retry it soon
+                // (Twitch-only) instead of waiting for the next hourly refresh.
+                HandleTwitchFetchOutcome(onlyPlatform);
 
                 MinerStatus = "Idle";
                 MinerStatusDetails = $"{_activeCampaigns.Count} active campaigns loaded";

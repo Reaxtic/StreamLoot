@@ -357,7 +357,7 @@ namespace Core.Managers
 
                     client.DefaultRequestHeaders.Add("Cache-Control", "no-cache");
 
-                    serverUpdateInfo = JsonSerializer.Deserialize<UpdateInfo>(await client.GetStringAsync("https://raw.githubusercontent.com/Reaxtic/StreamLoot/master/updateInfo.sdc")) ?? new UpdateInfo();
+                    serverUpdateInfo = JsonSerializer.Deserialize<UpdateInfo>(await client.GetStringAsync("https://raw.githubusercontent.com/Reaxtic/StreamLoot/main/updateInfo.sdc")) ?? new UpdateInfo();
                 }
                 catch (Exception ex)
                 {

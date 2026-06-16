@@ -23,6 +23,9 @@ namespace Core.Services
         private string? _accessToken;
         private string? _userId;
 
+        /// <inheritdoc />
+        public bool LastDashboardFetchFailed { get; private set; }
+
         // Watch heartbeat ("minute-watched") state — credits drop watch time directly via Twitch's analytics
         // endpoint, the way DevilXD's miner does, instead of relying on the hidden player actually decoding video.
         private string? _spadeUrl;
@@ -843,6 +846,7 @@ namespace Core.Services
                 if (jsonText.Contains("\"errors\""))
                 {
                     AppLogger.Error("TwitchGql", "QueryFullDropsDashboard retry still returned GraphQL errors.");
+                    LastDashboardFetchFailed = true;
                     throw new InvalidOperationException("Failed integrity, please wait a while and try again.");
                 }
             }
@@ -850,6 +854,7 @@ namespace Core.Services
             response.EnsureSuccessStatusCode();
 
             JsonArray responseArray = JsonNode.Parse(jsonText)!.AsArray();
+            LastDashboardFetchFailed = false;
             AppLogger.Info("TwitchGql", "QueryFullDropsDashboard completed successfully.");
             return responseArray;
         }

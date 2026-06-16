@@ -21,6 +21,12 @@ namespace Core.Interfaces
         /// dashboard data.</returns>
         Task<JsonArray> QueryFullDropsDashboardAsync(CancellationToken ct = default);
         /// <summary>
+        /// True when the most recent <see cref="QueryFullDropsDashboardAsync"/> call failed (e.g. a Twitch integrity
+        /// rejection that survived the retry). Lets callers schedule a sooner retry instead of waiting for the next
+        /// full refresh, since such failures are transient ("please wait a while and try again").
+        /// </summary>
+        bool LastDashboardFetchFailed { get; }
+        /// <summary>
         /// Asynchronously retrieves details for multiple drop campaigns in a single batch operation.
         /// </summary>
         /// <param name="requests">A read-only list of tuples, each containing a drop campaign ID and a channel login, specifying the campaigns
