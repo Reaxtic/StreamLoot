@@ -119,6 +119,10 @@ Released under the [**MIT License**](LICENSE).
 
 Stream Loot is a fork of **Stream Drop Collector** by **Marcus Jensen (tsgsOFFICIAL)** — full credit to the original author. Modifications © Reaxtic.
 
+**Acknowledgment:** the drop‑crediting approach (Twitch "minute‑watched" events) and the live channel‑picker UX were inspired by [**TwitchDropsMiner** by DevilXD](https://github.com/DevilXD/TwitchDropsMiner) (also MIT‑licensed). No source code was copied — Stream Loot is an independent C#/.NET implementation — but the protocol insight and UX ideas deserve a thank‑you.
+
+See the full release history in [CHANGELOG.md](CHANGELOG.md).
+
 <div align="center">
 
 ⭐ **If Stream Loot saves you hours of idle watching, drop a star — it genuinely helps!** ⭐
