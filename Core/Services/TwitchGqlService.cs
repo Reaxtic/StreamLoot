@@ -794,7 +794,7 @@ namespace Core.Services
         /// <param name="ct">A cancellation token that can be used to cancel the operation.</param>
         /// <returns>A JSON object containing the data from the Twitch Drops dashboard. The object includes information about the
         /// user's drops campaigns and inventory.</returns>
-        public async Task<JsonArray> QueryFullDropsDashboardAsync(CancellationToken ct = default)
+        public async Task<JsonArray> QueryFullDropsDashboardAsync(CancellationToken ct = default, bool allowWebViewFallback = false)
         {
             await RefreshHeadersAsync(ct);
 
@@ -846,6 +846,25 @@ namespace Core.Services
                 if (jsonText.Contains("\"errors\""))
                 {
                     AppLogger.Error("TwitchGql", "QueryFullDropsDashboard retry still returned GraphQL errors.");
+
+                    // Token-replay keeps failing Twitch's integrity check. Fall back to reading the dashboard the way
+                    // the real browser does: navigate the WebView to /drops/campaigns and capture its own response —
+                    // the browser solves the Kasada challenge natively, so this works where the replay can't.
+                    if (allowWebViewFallback)
+                    {
+                        try
+                        {
+                            JsonArray native = await QueryFullDropsDashboardViaWebViewAsync(ct);
+                            LastDashboardFetchFailed = false;
+                            AppLogger.Info("TwitchGql", "QueryFullDropsDashboard recovered via native WebView capture.");
+                            return native;
+                        }
+                        catch (Exception ex)
+                        {
+                            AppLogger.Warn("TwitchGql", $"Native WebView dashboard fallback failed: {ex.Message}");
+                        }
+                    }
+
                     LastDashboardFetchFailed = true;
                     throw new InvalidOperationException("Failed integrity, please wait a while and try again.");
                 }
@@ -857,6 +876,44 @@ namespace Core.Services
             LastDashboardFetchFailed = false;
             AppLogger.Info("TwitchGql", "QueryFullDropsDashboard completed successfully.");
             return responseArray;
+        }
+
+        /// <summary>
+        /// Reads the drops dashboard the way the real site does: navigates the WebView to /drops/campaigns and captures
+        /// the browser's own (post-integrity-challenge) GraphQL response, then reshapes it into the array the callers
+        /// expect ([0] = inventory/in-progress, [1] = ViewerDropsDashboard with dropCampaigns). Used as a fallback when
+        /// the HttpClient token-replay keeps failing Twitch's integrity check. Must only be called while the watcher is
+        /// paused, since it navigates the shared Twitch WebView away from any watched stream.
+        /// </summary>
+        private async Task<JsonArray> QueryFullDropsDashboardViaWebViewAsync(CancellationToken ct)
+        {
+            string body = await _host.CaptureViewerDropsDashboardResponseAsync(20000, ct);
+            JsonNode? parsed = JsonNode.Parse(body);
+
+            JsonObject? dropsDashboard = null;
+            JsonObject? inventory = null;
+
+            IEnumerable<JsonNode?> elements = parsed is JsonArray arr ? arr : new[] { parsed };
+            foreach (JsonNode? el in elements)
+            {
+                if (el is not JsonObject obj)
+                    continue;
+                JsonNode? currentUser = obj["data"]?["currentUser"];
+                if (currentUser == null)
+                    continue;
+                if (dropsDashboard == null && currentUser["dropCampaigns"] is JsonArray)
+                    dropsDashboard = obj;
+                if (inventory == null && currentUser["inventory"]?["dropCampaignsInProgress"] is JsonArray)
+                    inventory = obj;
+            }
+
+            if (dropsDashboard == null)
+                throw new InvalidOperationException("Native dashboard capture did not contain a dropCampaigns array.");
+
+            // Mirror the batch shape the providers index into: [0] = inventory, [1] = ViewerDropsDashboard.
+            return new JsonArray(
+                (JsonNode?)(inventory?.DeepClone()) ?? new JsonObject(),
+                dropsDashboard.DeepClone());
         }
         /// <summary>
         /// Retrieves detailed information for multiple Twitch drop campaigns in a single batch operation.

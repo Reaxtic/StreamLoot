@@ -26,7 +26,9 @@ namespace Core.Services
                 AppLogger.Info("TwitchDrops", "Fetching active campaigns started.");
                 await host.EnsureInitializedAsync();
 
-                JsonArray dashboard = await gql.QueryFullDropsDashboardAsync(ct);
+                // Allow the native WebView fallback here: the campaign-list load runs with the watcher paused, so it's
+                // safe to navigate the shared WebView to capture the dashboard if token-replay hits an integrity wall.
+                JsonArray dashboard = await gql.QueryFullDropsDashboardAsync(ct, allowWebViewFallback: true);
 
                 JsonObject ongoingCampaigns = dashboard[0]!.AsObject();
                 JsonObject activeCampaigns = dashboard[1]!.AsObject();

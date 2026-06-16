@@ -19,7 +19,7 @@ namespace Core.Interfaces
         /// <param name="ct">A cancellation token that can be used to cancel the operation.</param>
         /// <returns>A task that represents the asynchronous operation. The task result contains a JsonObject with the full
         /// dashboard data.</returns>
-        Task<JsonArray> QueryFullDropsDashboardAsync(CancellationToken ct = default);
+        Task<JsonArray> QueryFullDropsDashboardAsync(CancellationToken ct = default, bool allowWebViewFallback = false);
         /// <summary>
         /// True when the most recent <see cref="QueryFullDropsDashboardAsync"/> call failed (e.g. a Twitch integrity
         /// rejection that survived the retry). Lets callers schedule a sooner retry instead of waiting for the next

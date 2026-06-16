@@ -142,7 +142,12 @@ namespace UI.Views
 
                             AppLogger.Debug("WebViewCapture", $"Body captured for ViewerDropsDashboard response: {body}\n\nlength={body.Length}");
 
-                            if (body.Contains("ViewerDropsDashboard") || body.Contains("rewardCampaignsAvailableToUser"))
+                            // Twitch's FIRST dashboard response is the integrity challenge ("IntegrityCheckFailed",
+                            // dropCampaigns: null). Skip it and wait for the post-challenge success the browser
+                            // produces on its retry — otherwise we'd capture the empty error body.
+                            bool isDropsDashboard = body.Contains("ViewerDropsDashboard") || body.Contains("rewardCampaignsAvailableToUser");
+                            bool isIntegrityFailure = body.Contains("IntegrityCheckFailed") || body.Contains("failed integrity check");
+                            if (isDropsDashboard && !isIntegrityFailure)
                             {
                                 Dispatcher.Invoke(() =>
                                 {
