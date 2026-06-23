@@ -1069,11 +1069,6 @@ namespace Core.Managers
                             if (c.Availability != info.State || c.OnlineChannels != info.Online)
                                 ActiveCampaigns[i] = c with { Availability = info.State, OnlineChannels = info.Online };
                         }
-
-                        // Availability is now known — rebuild the game-filter menu so it lists only games that are
-                        // actually mineable right now (linked + has a live channel), not every game that merely has
-                        // a campaign.
-                        UISettingsManager.Instance.UpdateAvailableGameFilterOptions(ActiveCampaigns);
                     });
                 }
 
