@@ -56,6 +56,12 @@ namespace Core.Managers
         private bool _lastKnownKickOnlineState;
         private bool _lastKnownTwitchOnlineState;
 
+        // Throttle the Twitch live/category GQL eligibility probe: doing it on every 30s health tick hammered
+        // Twitch's GQL (~120 calls/hour just for this), which risks tripping their integrity/bot rate-limits.
+        // We re-probe at most every ~2 min and reuse the cached verdict in between.
+        private DateTime _lastTwitchEligibilityCheck = DateTime.MinValue;
+        private bool _cachedTwitchEligible;
+
         // Live online state from the most recent health check (updated every 30s, set true at selection). The
         // optimistic per-minute tick only advances while this is true, so a bar can't keep climbing after the
         // watched streamer goes offline (which earns nothing on the server).
@@ -1561,6 +1567,8 @@ namespace Core.Managers
                             _currentTwitchCampaign = fresh;
                             _lastKnownTwitchOnlineState = true;
                             _twitchCurrentlyOnline = true;
+                            _cachedTwitchEligible = true; // just confirmed eligible via GQL — seed the throttle cache
+                            _lastTwitchEligibilityCheck = DateTime.Now;
                             UpdateCurrentSelectionFlags();
 
                             _twitchWatchedSeconds = fresh.Rewards.Sum(r => Math.Min(r.ProgressMinutes, r.RequiredMinutes) * 60);
@@ -1672,6 +1680,8 @@ namespace Core.Managers
                         _currentTwitchLogin = twitchLogin;
                         _lastKnownTwitchOnlineState = true;
                         _twitchCurrentlyOnline = true;
+                        _cachedTwitchEligible = true; // just confirmed eligible via GQL — seed the throttle cache
+                        _lastTwitchEligibilityCheck = DateTime.Now;
                         UpdateCurrentSelectionFlags();
 
                         // Sync baseline NOW - right after selection, before any further logic
@@ -2115,6 +2125,13 @@ namespace Core.Managers
                         twitchOnline = false;
                         twitchCorrectCategory = false;
                     }
+                    else if ((DateTime.Now - _lastTwitchEligibilityCheck) < TimeSpan.FromMinutes(2))
+                    {
+                        // Re-use the recent verdict instead of hitting Twitch GQL again — gentler on their
+                        // integrity/rate limits. A stream's live/category status rarely changes within 2 minutes.
+                        twitchOnline = _cachedTwitchEligible;
+                        twitchCorrectCategory = _cachedTwitchEligible;
+                    }
                     else
                     {
                         // Prefer authoritative GQL (live + category); fall back to DOM if unavailable.
@@ -2129,6 +2146,8 @@ namespace Core.Managers
                             twitchOnline = await IsTwitchStreamOnline();
                             twitchCorrectCategory = await IsTwitchStreamCategoryCorrect();
                         }
+                        _cachedTwitchEligible = twitchOnline;
+                        _lastTwitchEligibilityCheck = DateTime.Now;
                     }
                     bool twitchShowingAd = _currentTwitchCampaign != null && await IsTwitchShowingAd();
                     bool kickOnline = _currentKickCampaign != null && await IsKickStreamOnline();
