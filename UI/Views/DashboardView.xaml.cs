@@ -385,7 +385,13 @@ namespace UI.Views
                     {
                         case "Idle":
                             MinerStatus = "Idle";
-                            MinerStatusDetails = "Waiting for drops";
+                            // Make it clear when there's simply nothing to mine within the user's game filter, so an
+                            // active whitelist with no live channels doesn't look like the app is stuck.
+                            bool filterActive = UISettingsManager.Instance.TwitchGameWhitelistSlugs.Count > 0
+                                || UISettingsManager.Instance.KickGameWhitelistSlugs.Count > 0;
+                            MinerStatusDetails = filterActive
+                                ? "No live channels for your selected games right now"
+                                : "Waiting for drops";
                             break;
                         case "Starting":
                             MinerStatus = "Starting";

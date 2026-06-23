@@ -554,8 +554,26 @@ namespace Core.Managers
             _isUpdatingGameFilterOptions = true;
             try
             {
-                List<(Platform platform, string slug, string displayName)> options = campaigns
-                    .Where(c => !string.IsNullOrWhiteSpace(c.Slug))
+                List<DropsCampaign> all = campaigns.Where(c => !string.IsNullOrWhiteSpace(c.Slug)).ToList();
+
+                // Only offer games the user can actually mine right now: the account is linked (campaigns reaching
+                // here are already account-connected) AND there's a live channel to watch (Available or Category).
+                // Until availability has been computed (all Unknown) we fall back to showing everything, so the list
+                // is never empty on first load. Evaluated per platform so one platform's pending check doesn't blank
+                // the other.
+                List<DropsCampaign> mineable = all
+                    .Where(c => c.Availability is CampaignAvailability.Available or CampaignAvailability.Category)
+                    .ToList();
+
+                bool twitchKnown = mineable.Any(c => c.Platform == Platform.Twitch);
+                bool kickKnown = mineable.Any(c => c.Platform == Platform.Kick);
+                List<DropsCampaign> source = all.Where(c =>
+                    c.Platform == Platform.Twitch
+                        ? (twitchKnown ? (c.Availability is CampaignAvailability.Available or CampaignAvailability.Category) : true)
+                        : (kickKnown ? (c.Availability is CampaignAvailability.Available or CampaignAvailability.Category) : true))
+                    .ToList();
+
+                List<(Platform platform, string slug, string displayName)> options = source
                     .Select(c => (c.Platform, c.Slug.Trim().ToLowerInvariant(), c.GameName))
                     .GroupBy(x => $"{x.Platform}:{x.Item2}", StringComparer.OrdinalIgnoreCase)
                     .Select(g => g.First())

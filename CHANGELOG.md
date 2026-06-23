@@ -34,6 +34,20 @@ wasting time on dead campaigns.
   version and points at the correct branch, so the updater stops trying (and
   failing) to "update" to a non-existent build.
 
+### Game filtering
+- **Only mineable games are listed** — the Game Filtering menu now shows just the
+  games you can actually mine right now (account linked AND a live channel
+  available), instead of every game that merely has a campaign. Refreshes as
+  availability changes.
+- **Clearer idle status** — when a game filter is active and nothing is currently
+  mineable, the status says so ("No live channels for your selected games right
+  now") instead of looking stuck.
+
+### Polling
+- **Gentler on Twitch** — the live/category eligibility check is throttled to ~2
+  min (was every 30s), reducing GQL traffic ~4× to lower the chance of tripping
+  Twitch's integrity rate-limits.
+
 ## [1.0.1] — 2026-06-16
 
 Major reliability overhaul for drop mining, plus a new channel picker.
