@@ -35,6 +35,10 @@ namespace Core.Managers
         // Live/offline status of the currently watched streams (from the 30s health check).
         public event Action<bool>? TwitchStreamOnlineChanged;
         public event Action<bool>? KickStreamOnlineChanged;
+        // Raised when the cached campaign list is detected as stale (contains ended campaigns) — e.g. after the app
+        // ran for days across a PC sleep without a successful refresh. The Dashboard responds by reloading campaigns.
+        public event Action? ReloadCampaignsRequested;
+        private DateTime _lastStaleReloadRequest = DateTime.MinValue;
 
         // Currently watched campaigns
         private DropsCampaign? _currentTwitchCampaign;
@@ -1510,9 +1514,19 @@ namespace Core.Managers
                 if (token.IsCancellationRequested)
                     return;
 
+                // If the cached list contains campaigns that have already ended, it's stale (the app likely ran across
+                // a PC sleep / fetch outage without a refresh). Ask the Dashboard to reload it — throttled so this
+                // can't spin. Selection below still proceeds using only the campaigns that are genuinely active now.
+                if (snapshot.Any(c => c.EndsAt <= DateTimeOffset.Now) && (DateTime.Now - _lastStaleReloadRequest) > TimeSpan.FromMinutes(5))
+                {
+                    _lastStaleReloadRequest = DateTime.Now;
+                    AppLogger.Info("Miner", "Cached campaign list contains ended campaigns — requesting a reload.");
+                    ReloadCampaignsRequested?.Invoke();
+                }
+
                 // Group campaigns by platform
-                List<DropsCampaign> twitchCampaigns = snapshot.Where(c => c.Platform == Platform.Twitch && c.HasProgressToMake()).ToList();
-                List<DropsCampaign> kickCampaigns = snapshot.Where(c => c.Platform == Platform.Kick && c.HasProgressToMake()).ToList();
+                List<DropsCampaign> twitchCampaigns = snapshot.Where(c => c.Platform == Platform.Twitch && c.HasProgressToMake() && c.IsWithinActiveWindow()).ToList();
+                List<DropsCampaign> kickCampaigns = snapshot.Where(c => c.Platform == Platform.Kick && c.HasProgressToMake() && c.IsWithinActiveWindow()).ToList();
 
                 // ----------------------------------------------------------------
                 // Twitch handling
@@ -2140,8 +2154,8 @@ namespace Core.Managers
                         await ReconcileTwitchProgressAsync();
 
                     // Group campaigns by platform
-                    List<DropsCampaign> twitchCampaigns = [.. ActiveCampaigns.Where(c => c.Platform == Platform.Twitch && c.HasProgressToMake())];
-                    List<DropsCampaign> kickCampaigns = [.. ActiveCampaigns.Where(c => c.Platform == Platform.Kick && c.HasProgressToMake())];
+                    List<DropsCampaign> twitchCampaigns = [.. ActiveCampaigns.Where(c => c.Platform == Platform.Twitch && c.HasProgressToMake() && c.IsWithinActiveWindow())];
+                    List<DropsCampaign> kickCampaigns = [.. ActiveCampaigns.Where(c => c.Platform == Platform.Kick && c.HasProgressToMake() && c.IsWithinActiveWindow())];
 
                     // NOTE: an ad is NOT a reason to switch — Twitch keeps crediting drop watch time during ads, and
                     // switching channel/campaign on every ad caused needless thrashing (jumping off a perfectly good
@@ -3643,6 +3657,17 @@ namespace Core.Managers
         public static bool HasProgressToMake(this DropsCampaign campaign)
         {
             return campaign.Rewards.Any(r => !r.IsClaimed);
+        }
+
+        /// <summary>
+        /// True only while the campaign is in its live earning window (started and not yet ended). Guards against
+        /// mining a campaign whose drops are no longer obtainable when the cached campaign list has gone stale
+        /// (e.g. the app ran for days across a fetch outage / PC sleep without a successful refresh).
+        /// </summary>
+        public static bool IsWithinActiveWindow(this DropsCampaign campaign)
+        {
+            DateTimeOffset now = DateTimeOffset.Now;
+            return campaign.StartsAt <= now && campaign.EndsAt > now;
         }
         /// <summary>
         /// Calculates the overall completion percentage of all rewards in the specified campaign that require progress.

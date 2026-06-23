@@ -441,6 +441,11 @@ namespace UI.Views
                 RefreshAlsoMining();
             };
 
+            // When the manager reports the cached campaign list is stale (e.g. after a PC sleep), reload it so ended
+            // campaigns drop off and fresh ones come in.
+            DropsInventoryManager.Instance.ReloadCampaignsRequested += () =>
+                System.Windows.Application.Current.Dispatcher.InvokeAsync(() => ScheduleDropsLoad());
+
             // Recompute the "also earning" list whenever campaigns/progress are refreshed from the server.
             DropsInventoryManager.Instance.ActiveCampaigns.CollectionChanged += (s, e) => RefreshAlsoMining();
 
