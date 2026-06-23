@@ -1,8 +1,13 @@
 {
-  "version": "1.0.1",
-  "type": "Release",
-  "changelog": "Stream Loot rebrand: live channel picker, channel rotation when a stream stops crediting, transient integrity-failure retry/self-healing, per-platform resets, and Inventory filters.",
+  "version": "1.0.2",
+  "type": "Feature",
+  "changelog": "Twitch integrity resilience: retry-with-backoff + native WebView dashboard fallback so campaigns load even when token-replay hits Twitch's integrity wall. Never mines ended campaigns, and auto-reloads a stale list after PC sleep. Fixed a bogus auto-update loop.",
   "historic_versions": [
+    {
+      "version": "1.0.1",
+      "type": "Release",
+      "changelog": "Stream Loot rebrand: live channel picker, channel rotation when a stream stops crediting, transient integrity-failure retry/self-healing, per-platform resets, and Inventory filters."
+    },
     {
       "version": "1.0.17",
       "type": "Patch",

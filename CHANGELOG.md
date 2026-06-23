@@ -3,6 +3,37 @@
 All notable changes to **Stream Loot** are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.0.2] — 2026-06-23
+
+Focus: surviving Twitch's tightened drops-dashboard integrity checks, and never
+wasting time on dead campaigns.
+
+### Fixed — Twitch integrity / loading
+- **Retry on integrity failure** — when Twitch rejects the drops-dashboard query
+  ("failed integrity check"), the Twitch campaign load now retries with a short
+  backoff (90s → 3m → 6m) instead of leaving Twitch empty until the next hourly
+  refresh.
+- **Native WebView dashboard fallback** — if token-replay keeps failing integrity,
+  the app reads the dashboard the way the real site does: it navigates the (paused)
+  WebView to `/drops/campaigns` and captures the browser's own post-challenge
+  response. The browser solves the Kasada challenge natively, so this works where
+  the replay can't. Scoped to the campaign-list load so it never disrupts a
+  watched stream.
+
+### Fixed — stale campaigns
+- **Never mines ended campaigns** — campaigns outside their active window
+  (start…end) are skipped at selection time, so a cached list that went stale
+  (app left running for days across a PC sleep / fetch outage) can't keep mining a
+  campaign whose drops are no longer available.
+- **Auto-reload after sleep** — when the cached list is detected stale (contains
+  ended campaigns), it's reloaded automatically so finished campaigns drop off and
+  fresh ones come in.
+
+### Fixed — updater
+- **No more bogus auto-update loop** — the version check now matches the app
+  version and points at the correct branch, so the updater stops trying (and
+  failing) to "update" to a non-existent build.
+
 ## [1.0.1] — 2026-06-16
 
 Major reliability overhaul for drop mining, plus a new channel picker.
