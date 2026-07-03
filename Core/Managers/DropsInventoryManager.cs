@@ -1536,6 +1536,19 @@ namespace Core.Managers
                 if (token.IsCancellationRequested)
                     return;
 
+                // Auto-unpin a finished pin: when the pinned campaign is fully claimed, has ended, or is gone from
+                // the list, the pin has nothing left to do — clear it so selection returns to automatic priorities.
+                // A stale pin is not just cosmetic: it also disables the keep-current/sticky paths ("pinned to a
+                // different campaign"), causing needless stream re-navigation on every re-evaluation.
+                if (!string.IsNullOrWhiteSpace(_forcedCampaignId)
+                    && !snapshot.Any(c => c.Id == _forcedCampaignId && c.HasProgressToMake() && c.IsWithinActiveWindow()))
+                {
+                    AppLogger.Info("Selection", $"Pinned campaign {_forcedCampaignId} is completed/ended — auto-unpinning, returning to automatic selection.");
+                    _forcedCampaignId = null;
+                    SaveForcedCampaignId(null);
+                    UpdateCurrentSelectionFlags();
+                }
+
                 // If the cached list contains campaigns that have already ended, it's stale (the app likely ran across
                 // a PC sleep / fetch outage without a refresh). Ask the Dashboard to reload it — throttled so this
                 // can't spin. Selection below still proceeds using only the campaigns that are genuinely active now.
