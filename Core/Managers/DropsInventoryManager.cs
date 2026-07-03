@@ -1428,6 +1428,13 @@ namespace Core.Managers
                         {
                             _failedClaimRewardIds.Add(parentCampaign.Id + "|" + item.Id);
                         }
+                        // Force the next health tick to reconcile immediately: the failed claim usually means a
+                        // local-vs-server desync, and snapping ProgressMinutes back to the server truth right away
+                        // makes the miner keep watching the remaining minutes instead of wandering off.
+                        if (parentCampaign.Platform == Platform.Twitch)
+                            _lastTwitchProgressReconcile = DateTime.MinValue;
+                        else
+                            _lastKickProgressReconcile = DateTime.MinValue;
                         AppLogger.Warn("Miner", $"Claim failed (likely not yet complete server-side); will retry after next server refresh. campaignId={parentCampaign.Id}, rewardId={item.Id}, name='{item.Name}'");
                     }
                 }
@@ -1533,18 +1540,25 @@ namespace Core.Managers
                 if (token.IsCancellationRequested)
                     return;
 
-                // Auto-unpin a finished pin: when the pinned campaign is fully claimed, has ended, or is gone from
-                // the list, the pin has nothing left to do — clear it so selection returns to automatic priorities.
-                // A stale pin is not just cosmetic: it also disables the keep-current/sticky paths ("pinned to a
-                // different campaign"), causing needless stream re-navigation on every re-evaluation.
-                if (!string.IsNullOrWhiteSpace(_forcedCampaignId)
-                    && !snapshot.Any(c => c.Id == _forcedCampaignId && c.HasProgressToMake() && c.IsWithinActiveWindow()))
+                // Auto-unpin only on HARD evidence: every reward claimed, campaign ended, or gone from the list.
+                // Deliberately NOT on "no watch time left" — the optimistic local tick can overshoot the server
+                // (local 120/120 vs server 117/120), making the campaign look complete while its claim still fails;
+                // unpinning then abandons the drop at 98%. With the pin kept, the server reconcile snaps the
+                // progress back, the remaining minutes get watched, the claim succeeds, and THEN the pin clears.
+                if (!string.IsNullOrWhiteSpace(_forcedCampaignId))
                 {
-                    AppLogger.Info("Selection", $"Pinned campaign {_forcedCampaignId} is completed/ended — auto-unpinning, returning to automatic selection.");
-                    _forcedCampaignId = null;
-                    _pinSuspendedNoStreamers = false;
-                    SaveForcedCampaignId(null);
-                    UpdateCurrentSelectionFlags();
+                    DropsCampaign? pinnedCampaign = snapshot.FirstOrDefault(c => c.Id == _forcedCampaignId);
+                    bool pinFullyDone = pinnedCampaign == null
+                        || !pinnedCampaign.IsWithinActiveWindow()
+                        || pinnedCampaign.Rewards.All(r => r.IsClaimed);
+                    if (pinFullyDone)
+                    {
+                        AppLogger.Info("Selection", $"Pinned campaign {_forcedCampaignId} is fully claimed/ended — auto-unpinning, returning to automatic selection.");
+                        _forcedCampaignId = null;
+                        _pinSuspendedNoStreamers = false;
+                        SaveForcedCampaignId(null);
+                        UpdateCurrentSelectionFlags();
+                    }
                 }
 
                 // If the cached list contains campaigns that have already ended, it's stale (the app likely ran across
@@ -2299,6 +2313,23 @@ namespace Core.Managers
                             AppLogger.Info("Selection", $"Pinned campaign '{pinned.Name}' has a live streamer again — returning to it.");
                             _pinSuspendedNoStreamers = false;
                             if (pinned.Platform == Platform.Twitch) pinResumeTwitch = true; else pinResumeKick = true;
+                        }
+                    }
+
+                    // Pin drift: the pinned campaign has watch time to earn again (e.g. a premature claim failed and
+                    // the server reconcile snapped the progress back below 100%), but something else is being mined.
+                    // Return to the pin. Guarded by the suspension flag (offline pins fall back by design).
+                    if (!_pinSuspendedNoStreamers && !string.IsNullOrWhiteSpace(_forcedCampaignId))
+                    {
+                        DropsCampaign? pinnedNow = ActiveCampaigns.FirstOrDefault(c => c.Id == _forcedCampaignId);
+                        if (pinnedNow != null && pinnedNow.HasProgressToMake() && pinnedNow.IsWithinActiveWindow())
+                        {
+                            string? currentId = pinnedNow.Platform == Platform.Twitch ? _currentTwitchCampaign?.Id : _currentKickCampaign?.Id;
+                            if (!string.Equals(currentId, pinnedNow.Id, StringComparison.Ordinal))
+                            {
+                                AppLogger.Info("Selection", $"Pinned campaign '{pinnedNow.Name}' has progress to make but isn't being mined — returning to it.");
+                                if (pinnedNow.Platform == Platform.Twitch) pinResumeTwitch = true; else pinResumeKick = true;
+                            }
                         }
                     }
 
