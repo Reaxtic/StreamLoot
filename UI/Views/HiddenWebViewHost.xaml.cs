@@ -46,6 +46,62 @@ namespace UI.Views
             WebView.CoreWebView2.IsMuted = true;
             WebView.CoreWebView2.Settings.AreHostObjectsAllowed = true;
             WebView.CoreWebView2.Settings.IsWebMessageEnabled = true;
+
+            if (!_processFailedHooked)
+            {
+                _processFailedHooked = true;
+                WebView.CoreWebView2.ProcessFailed += OnCoreProcessFailed;
+            }
+        }
+
+        private bool _processFailedHooked;
+        private int _recovering;
+
+        /// <summary>
+        /// Self-heals after a WebView2 process failure (e.g. a GPU-driver crash killing the browser process, which
+        /// previously left the app silently hung until a manual restart). A dead renderer is reloaded in place; a
+        /// dead browser/GPU process gets the whole CoreWebView2 re-initialized.
+        /// </summary>
+        private async void OnCoreProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
+        {
+            AppLogger.Error("WebViewHost", $"WebView2 process failed: kind={e.ProcessFailedKind}, reason={e.Reason}, exitCode={e.ExitCode} — attempting recovery.");
+
+            if (e.ProcessFailedKind is CoreWebView2ProcessFailedKind.RenderProcessExited
+                or CoreWebView2ProcessFailedKind.RenderProcessUnresponsive)
+            {
+                try { await Dispatcher.InvokeAsync(() => WebView.Reload()); }
+                catch (Exception ex) { AppLogger.Warn("WebViewHost", $"Renderer reload after process failure failed: {ex.Message}"); }
+                return;
+            }
+
+            if (Interlocked.CompareExchange(ref _recovering, 1, 0) != 0)
+                return;
+            try
+            {
+                await Task.Delay(3000); // let the crashed process settle before re-creating
+                await Dispatcher.InvokeAsync(async () =>
+                {
+                    try
+                    {
+                        _processFailedHooked = false;
+                        await WebView.EnsureCoreWebView2Async();
+                        WebView.CoreWebView2.IsMuted = true;
+                        WebView.CoreWebView2.Settings.AreHostObjectsAllowed = true;
+                        WebView.CoreWebView2.Settings.IsWebMessageEnabled = true;
+                        WebView.CoreWebView2.ProcessFailed += OnCoreProcessFailed;
+                        _processFailedHooked = true;
+                        AppLogger.Info("WebViewHost", "WebView2 recovered after process failure.");
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Error("WebViewHost", "WebView2 recovery failed; will retry on next use.", ex);
+                    }
+                });
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _recovering, 0);
+            }
         }
         /// <summary>
         /// Adds a new cookie or updates an existing cookie for the specified domain and path asynchronously.

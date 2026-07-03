@@ -45,6 +45,10 @@ namespace Core.Managers
         private bool _kickGameFilterExclude;
         private bool _isUpdatingGameFilterOptions;
         private bool _isLoadingSettings;
+        private bool _softwareRendering;
+        private bool _sleepWhenDone;
+        private string _language = "en";
+        private bool _firstRunCompleted;
 
         public ObservableCollection<GameFilterOption> TwitchGameFilterOptions { get; } = new ObservableCollection<GameFilterOption>();
         public ObservableCollection<GameFilterOption> KickGameFilterOptions { get; } = new ObservableCollection<GameFilterOption>();
@@ -199,6 +203,37 @@ namespace Core.Managers
         {
             get => _verboseDebugLogging;
             set => SetField(ref _verboseDebugLogging, value);
+        }
+        /// <summary>
+        /// Run WebView2 without GPU acceleration (helps on machines with unstable graphics drivers).
+        /// Takes effect after an app restart.
+        /// </summary>
+        public bool SoftwareRendering
+        {
+            get => _softwareRendering;
+            set => SetField(ref _softwareRendering, value);
+        }
+        /// <summary>Put the computer to sleep once every campaign is fully mined and claimed.</summary>
+        public bool SleepWhenDone
+        {
+            get => _sleepWhenDone;
+            set => SetField(ref _sleepWhenDone, value);
+        }
+        /// <summary>UI language code ("en" / "pl").</summary>
+        public string Language
+        {
+            get => _language;
+            set
+            {
+                if (SetField(ref _language, value))
+                    Loc.Instance.SetLanguage(value);
+            }
+        }
+        /// <summary>Whether the first-run onboarding has already been shown.</summary>
+        public bool FirstRunCompleted
+        {
+            get => _firstRunCompleted;
+            set => SetField(ref _firstRunCompleted, value);
         }
         /// <summary>
         /// Gets or sets a value indicating whether a software update is available.
@@ -410,6 +445,11 @@ namespace Core.Managers
                     // Set backing fields directly during load to avoid firing change/re-evaluation events.
                     _twitchGameFilterExclude = settings.TwitchGameFilterExclude;
                     _kickGameFilterExclude = settings.KickGameFilterExclude;
+                    _softwareRendering = settings.SoftwareRendering;
+                    _sleepWhenDone = settings.SleepWhenDone;
+                    _language = string.IsNullOrWhiteSpace(settings.Language) ? "en" : settings.Language!;
+                    _firstRunCompleted = settings.FirstRunCompleted;
+                    Loc.Instance.SetLanguage(_language);
                 }
             }
             catch (Exception ex) when (ex is JsonException || ex is IOException || ex is UnauthorizedAccessException)
@@ -454,7 +494,11 @@ namespace Core.Managers
                     TwitchGameWhitelistSlugs = [.. _twitchGameWhitelistSlugs],
                     KickGameWhitelistSlugs = [.. _kickGameWhitelistSlugs],
                     TwitchGameFilterExclude = _twitchGameFilterExclude,
-                    KickGameFilterExclude = _kickGameFilterExclude
+                    KickGameFilterExclude = _kickGameFilterExclude,
+                    SoftwareRendering = _softwareRendering,
+                    SleepWhenDone = _sleepWhenDone,
+                    Language = _language,
+                    FirstRunCompleted = _firstRunCompleted
                 };
 
                 string json = JsonSerializer.Serialize(settings, _jsonOptions);

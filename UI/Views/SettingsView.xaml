@@ -463,6 +463,35 @@
                     </StackPanel>
                 </Border>
 
+                <!-- ADVANCED / RELIABILITY -->
+                <Border Background="{DynamicResource CardBackgroundBrush}"
+                        CornerRadius="16" Padding="24" Margin="0,0,0,24"
+                        BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                    <StackPanel>
+                        <TextBlock Text="Advanced" Foreground="{DynamicResource TextSecondaryBrush}"
+                                   FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12"/>
+
+                        <CheckBox IsChecked="{Binding SoftwareRendering, Mode=TwoWay}"
+                                  Style="{StaticResource ModernCheckBoxStyle}"
+                                  Content="Software rendering (no GPU) — for unstable graphics drivers; takes effect after restart"
+                                  Margin="0,0,0,12"/>
+
+                        <CheckBox IsChecked="{Binding SleepWhenDone, Mode=TwoWay}"
+                                  Style="{StaticResource ModernCheckBoxStyle}"
+                                  Content="Put the computer to sleep when everything is mined and claimed"
+                                  Margin="0,0,0,12"/>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                            <TextBlock Text="Language / Język:" Foreground="{DynamicResource TextSecondaryBrush}"
+                                       FontSize="13" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                            <ComboBox x:Name="LanguageCombo" Width="140" SelectionChanged="OnLanguageChanged">
+                                <ComboBoxItem Content="English" Tag="en"/>
+                                <ComboBoxItem Content="Polski" Tag="pl"/>
+                            </ComboBox>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
                 <!-- LOGS -->
                 <Border Background="{DynamicResource CardBackgroundBrush}"
                         CornerRadius="16" Padding="24" Margin="0,0,0,24"

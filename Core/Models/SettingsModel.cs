@@ -22,5 +22,13 @@ namespace Core.Models
         // When true, the selected games are EXCLUDED (mine everything else) instead of being an allow-list.
         public bool TwitchGameFilterExclude { get; set; }
         public bool KickGameFilterExclude { get; set; }
+        // Run WebView2 without GPU acceleration (for machines with unstable graphics drivers).
+        public bool SoftwareRendering { get; set; }
+        // Put the computer to sleep once every campaign is fully mined and claimed.
+        public bool SleepWhenDone { get; set; }
+        // UI language ("en" / "pl").
+        public string? Language { get; set; }
+        // First-run onboarding has been shown.
+        public bool FirstRunCompleted { get; set; }
     }
 }

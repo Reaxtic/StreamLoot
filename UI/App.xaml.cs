@@ -53,6 +53,14 @@ namespace UI
 
             Directory.SetCurrentDirectory(AppContext.BaseDirectory);
 
+            // Optional software rendering: users with unstable GPU drivers (WebView2 dies with the driver) can
+            // disable GPU usage entirely. Must be set BEFORE any WebView2 environment is created.
+            if (UISettingsManager.Instance.SoftwareRendering)
+            {
+                Environment.SetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--disable-gpu --disable-gpu-compositing");
+                AppLogger.Info("App", "Software rendering enabled (WebView2 runs with --disable-gpu).");
+            }
+
             // Load Colors first
             Resources.MergedDictionaries.Add(new ResourceDictionary
             {

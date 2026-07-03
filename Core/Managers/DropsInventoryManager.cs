@@ -118,6 +118,45 @@ namespace Core.Managers
         // re-evaluation every ~30s, visibly resetting the dashboard cards over and over.
         private DateTime _lastTwitchStallReeval = DateTime.MinValue;
         private DateTime _lastKickStallReeval = DateTime.MinValue;
+
+        // Engine-silence watchdog: if the mining engine produces no heartbeat (health tick / selection pass) for
+        // 10+ minutes — e.g. after a GPU-driver crash left WebView2 hung — restart the loop instead of sitting
+        // silently until a manual restart.
+        private volatile bool _watchdogStarted;
+        private System.Threading.Timer? _watchdogTimer;
+        private DateTime _lastEngineHeartbeat = DateTime.Now;
+        private int _watchdogRestarting;
+
+        private void EnsureWatchdog()
+        {
+            if (_watchdogStarted)
+                return;
+            _watchdogStarted = true;
+            _watchdogTimer = new System.Threading.Timer(async _ =>
+            {
+                try
+                {
+                    if (_isPaused || (DateTime.Now - _lastEngineHeartbeat) < TimeSpan.FromMinutes(10))
+                        return;
+                    if (Interlocked.CompareExchange(ref _watchdogRestarting, 1, 0) != 0)
+                        return;
+                    try
+                    {
+                        AppLogger.Warn("Watchdog", $"Engine silent for {(DateTime.Now - _lastEngineHeartbeat).TotalMinutes:F0} min — restarting the mining loop.");
+                        _lastEngineHeartbeat = DateTime.Now;
+                        await StartWatchingStreams(true);
+                    }
+                    finally
+                    {
+                        Interlocked.Exchange(ref _watchdogRestarting, 0);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Error("Watchdog", "Watchdog tick failed.", ex);
+                }
+            }, null, TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(2));
+        }
         private readonly HashSet<string> _skipTwitchLogins = new(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _skipKickLogins = new(StringComparer.OrdinalIgnoreCase);
         // A channel the user explicitly picked (e.g. from the Dashboard channel list). It is watched directly,
@@ -1468,6 +1507,9 @@ namespace Core.Managers
                 if (_isPaused)
                     return;
 
+                EnsureWatchdog();
+                _lastEngineHeartbeat = DateTime.Now;
+
                 _startWatchingCts?.Cancel();
                 _startWatchingCts = new CancellationTokenSource();
                 CancellationToken token = _startWatchingCts.Token;
@@ -2406,6 +2448,11 @@ namespace Core.Managers
                 {
                     // An unhandled exception in this async-void timer handler would kill the process.
                     AppLogger.Error("HealthCheck", "Health check tick failed.", ex);
+                }
+                finally
+                {
+                    // Watchdog heartbeat: the engine is alive as long as health ticks keep completing.
+                    _lastEngineHeartbeat = DateTime.Now;
                 }
             };
 

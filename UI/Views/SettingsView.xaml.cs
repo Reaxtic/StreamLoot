@@ -20,6 +20,20 @@ namespace UI.Views
         {
             InitializeComponent();
             DataContext = UISettingsManager.Instance;
+
+            // Reflect the saved language in the combo (the change handler only fires on a real user change).
+            string lang = UISettingsManager.Instance.Language;
+            foreach (object item in LanguageCombo.Items)
+                if (item is System.Windows.Controls.ComboBoxItem cbi && string.Equals(cbi.Tag as string, lang, StringComparison.OrdinalIgnoreCase))
+                { LanguageCombo.SelectedItem = cbi; break; }
+            if (LanguageCombo.SelectedItem == null)
+                LanguageCombo.SelectedIndex = 0;
+        }
+
+        private void OnLanguageChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            if (LanguageCombo.SelectedItem is System.Windows.Controls.ComboBoxItem cbi && cbi.Tag is string code)
+                UISettingsManager.Instance.Language = code;
         }
 
         private async void OnUpdateButtonClick(object sender, RoutedEventArgs e)
