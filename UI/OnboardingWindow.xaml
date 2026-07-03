@@ -1,0 +1,38 @@
+<Window x:Class="UI.OnboardingWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Welcome to Stream Loot"
+        Width="560" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource MainBackgroundBrush}"
+        ResizeMode="NoResize"
+        WindowStyle="ToolWindow">
+    <StackPanel Margin="28">
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+            <Image Source="/Assets/logo.png" Width="44" Height="44"/>
+            <TextBlock x:Name="TitleText" FontSize="24" FontWeight="Bold" Margin="14,0,0,0" VerticalAlignment="Center"
+                       Foreground="{DynamicResource TextPrimaryBrush}"/>
+        </StackPanel>
+
+        <TextBlock x:Name="IntroText" FontSize="14" Foreground="{DynamicResource TextSecondaryBrush}"
+                   TextWrapping="Wrap" Margin="0,0,0,16"/>
+
+        <TextBlock x:Name="Step1Text" FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}"
+                   TextWrapping="Wrap" Margin="0,0,0,10"/>
+        <TextBlock x:Name="Step2Text" FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}"
+                   TextWrapping="Wrap" Margin="0,0,0,8"/>
+
+        <StackPanel Orientation="Horizontal" Margin="16,0,0,12">
+            <Button Content="Twitch drops connections" Padding="12,6" Margin="0,0,10,0"
+                    Click="OnTwitchConnectionsClick" Style="{StaticResource AccentButtonStyle}"/>
+            <Button Content="Kick drops page" Padding="12,6"
+                    Click="OnKickConnectionsClick" Style="{StaticResource AccentButtonStyle}"/>
+        </StackPanel>
+
+        <TextBlock x:Name="Step3Text" FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}"
+                   TextWrapping="Wrap" Margin="0,0,0,20"/>
+
+        <Button x:Name="StartButton" HorizontalAlignment="Right" Padding="20,8" FontWeight="Bold"
+                Click="OnStartClick" Style="{StaticResource AccentButtonStyle}"/>
+    </StackPanel>
+</Window>

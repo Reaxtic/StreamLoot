@@ -214,38 +214,45 @@ namespace Core.Managers
             "Stream Loot",
             "ForcedCampaign.txt");
 
-        private static void SaveForcedCampaignId(string? campaignId)
+        // Ordered pin QUEUE ("mine these, in this order"). The first entry is the ACTIVE pin — all existing pin
+        // machinery (_forcedCampaignId, suspension, drift, auto-unpin) operates on it; when it finishes, the next
+        // queued campaign is promoted automatically. The file stores one campaign id per line (an old single-line
+        // ForcedCampaign.txt loads as a one-element queue, so existing pins survive the upgrade).
+        private readonly List<string> _pinnedQueue = new();
+
+        private static void SavePinnedQueue(IReadOnlyList<string> queue)
         {
             try
             {
-                if (string.IsNullOrWhiteSpace(campaignId))
+                if (queue.Count == 0)
                 {
                     if (File.Exists(_forcedCampaignFilePath)) File.Delete(_forcedCampaignFilePath);
                 }
                 else
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(_forcedCampaignFilePath)!);
-                    File.WriteAllText(_forcedCampaignFilePath, campaignId);
+                    File.WriteAllLines(_forcedCampaignFilePath, queue);
                 }
             }
             catch (Exception ex)
             {
-                AppLogger.Warn("Selection", $"Failed to persist forced campaign: {ex.Message}");
+                AppLogger.Warn("Selection", $"Failed to persist pinned queue: {ex.Message}");
             }
         }
 
-        private static string? LoadForcedCampaignId()
+        private static List<string> LoadPinnedQueue()
         {
             try
             {
                 if (File.Exists(_forcedCampaignFilePath))
-                {
-                    string v = File.ReadAllText(_forcedCampaignFilePath).Trim();
-                    return string.IsNullOrWhiteSpace(v) ? null : v;
-                }
+                    return File.ReadAllLines(_forcedCampaignFilePath)
+                        .Select(l => l.Trim())
+                        .Where(l => !string.IsNullOrWhiteSpace(l))
+                        .Distinct(StringComparer.Ordinal)
+                        .ToList();
             }
             catch { }
-            return null;
+            return new List<string>();
         }
 
         private static bool IsVerboseDebugEnabled => UISettingsManager.Instance.VerboseDebugLogging;
@@ -270,7 +277,8 @@ namespace Core.Managers
         private DropsInventoryManager()
         {
             LoadLastWatchedStreamers();
-            _forcedCampaignId = LoadForcedCampaignId(); // restore a "Mine this" pin across restarts
+            _pinnedQueue.AddRange(LoadPinnedQueue()); // restore the "Mine this" pin queue across restarts
+            _forcedCampaignId = _pinnedQueue.FirstOrDefault();
             UISettingsManager.Instance.MiningPriorityModeChanged += OnMiningPriorityModeChanged;
             UISettingsManager.Instance.GameWhitelistChanged += OnGameWhitelistChanged;
 
@@ -743,18 +751,28 @@ namespace Core.Managers
         // === Manual user overrides (driven from the UI) ===
 
         /// <summary>
-        /// Pins a specific campaign to mine. Pass null to return to automatic priority selection.
-        /// Triggers an immediate re-evaluation.
+        /// Toggles a campaign in the ordered pin QUEUE: not queued → appended (mined after the earlier pins finish),
+        /// already queued → removed. Pass null to clear the whole queue and return to automatic selection.
+        /// The first queue entry is the active pin; the rest wait their turn. Triggers an immediate re-evaluation.
         /// </summary>
         public async Task SetForcedCampaignAsync(string? campaignId)
         {
             string? previousForcedId = _forcedCampaignId;
-            _forcedCampaignId = string.IsNullOrWhiteSpace(campaignId) ? null : campaignId;
+
+            lock (_pinnedQueue)
+            {
+                if (string.IsNullOrWhiteSpace(campaignId))
+                    _pinnedQueue.Clear();
+                else if (!_pinnedQueue.Remove(campaignId))
+                    _pinnedQueue.Add(campaignId);
+                _forcedCampaignId = _pinnedQueue.FirstOrDefault();
+                SavePinnedQueue(_pinnedQueue);
+            }
+
             _pinSuspendedNoStreamers = false; // any pin change starts fresh (a new pin gets its own live check)
-            SaveForcedCampaignId(_forcedCampaignId); // persist so the pin survives a restart
             AppLogger.Info("Selection", _forcedCampaignId == null
-                ? "Cleared forced campaign; back to automatic selection."
-                : $"User forced campaign id={_forcedCampaignId}.");
+                ? "Pin queue cleared; back to automatic selection."
+                : $"Pin queue updated. active={_forcedCampaignId}, queued={_pinnedQueue.Count}.");
 
             lock (_lastStreamerSync)
             {
@@ -1624,19 +1642,25 @@ namespace Core.Managers
                 // (local 120/120 vs server 117/120), making the campaign look complete while its claim still fails;
                 // unpinning then abandons the drop at 98%. With the pin kept, the server reconcile snaps the
                 // progress back, the remaining minutes get watched, the claim succeeds, and THEN the pin clears.
-                if (!string.IsNullOrWhiteSpace(_forcedCampaignId))
+                lock (_pinnedQueue)
                 {
-                    DropsCampaign? pinnedCampaign = snapshot.FirstOrDefault(c => c.Id == _forcedCampaignId);
-                    bool pinFullyDone = pinnedCampaign == null
-                        || !pinnedCampaign.IsWithinActiveWindow()
-                        || pinnedCampaign.Rewards.All(r => r.IsClaimed);
-                    if (pinFullyDone)
+                    if (_pinnedQueue.Count != 0)
                     {
-                        AppLogger.Info("Selection", $"Pinned campaign {_forcedCampaignId} is fully claimed/ended — auto-unpinning, returning to automatic selection.");
-                        _forcedCampaignId = null;
-                        _pinSuspendedNoStreamers = false;
-                        SaveForcedCampaignId(null);
-                        UpdateCurrentSelectionFlags();
+                        int removed = _pinnedQueue.RemoveAll(id =>
+                        {
+                            DropsCampaign? c = snapshot.FirstOrDefault(x => x.Id == id);
+                            return c == null || !c.IsWithinActiveWindow() || c.Rewards.All(r => r.IsClaimed);
+                        });
+                        if (removed > 0)
+                        {
+                            _forcedCampaignId = _pinnedQueue.FirstOrDefault();
+                            _pinSuspendedNoStreamers = false;
+                            SavePinnedQueue(_pinnedQueue);
+                            UpdateCurrentSelectionFlags();
+                            AppLogger.Info("Selection", _forcedCampaignId == null
+                                ? "Pinned campaign(s) fully claimed/ended — queue empty, returning to automatic selection."
+                                : $"Pinned campaign finished — promoting the next queued pin {_forcedCampaignId} ({_pinnedQueue.Count} in queue).");
+                        }
                     }
                 }
 
@@ -2279,10 +2303,13 @@ namespace Core.Managers
                         updatedRewards.Add(reward with { IsCurrentReward = isCurrentReward });
                     }
 
+                    int pinIndex;
+                    lock (_pinnedQueue) { pinIndex = _pinnedQueue.IndexOf(campaign.Id); }
                     updatedCampaigns.Add(campaign with
                     {
                         IsCurrentCampaign = isCurrentCampaign,
-                        IsPinned = !string.IsNullOrWhiteSpace(_forcedCampaignId) && campaign.Id == _forcedCampaignId,
+                        IsPinned = pinIndex >= 0,
+                        PinOrder = pinIndex + 1, // 0 = not pinned; 1 = active pin; 2+ = waiting in the queue
                         IsStalled = IsNotCrediting(campaign.Id),
                         Rewards = updatedRewards
                     });
@@ -2990,7 +3017,7 @@ namespace Core.Managers
             _kickCurrentlyOnline = false;
             _lastKickDropId = null;
             KickProgressChanged?.Invoke(0, 0);
-            KickCampaignChanged?.Invoke("Waiting — no live channel", null);
+            KickCampaignChanged?.Invoke(Loc.Instance["Dash.WaitingNoChannel"], null);
             KickDropChanged?.Invoke(string.Empty, null);
             KickChannelChanged?.Invoke(string.Empty);
             KickStreamOnlineChanged?.Invoke(false);
@@ -3007,7 +3034,7 @@ namespace Core.Managers
             _currentTwitchLogin = null;
             _lastTwitchDropId = null;
             TwitchProgressChanged?.Invoke(0, 0);
-            TwitchCampaignChanged?.Invoke("Waiting — no live channel", null);
+            TwitchCampaignChanged?.Invoke(Loc.Instance["Dash.WaitingNoChannel"], null);
             TwitchDropChanged?.Invoke(string.Empty, null);
             TwitchChannelChanged?.Invoke(string.Empty);
             TwitchStreamOnlineChanged?.Invoke(false);

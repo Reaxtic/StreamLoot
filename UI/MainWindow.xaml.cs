@@ -130,6 +130,21 @@ namespace UI
             FileVersionInfo localVersionInfo = FileVersionInfo.GetVersionInfo(Utility.GetExePath());
             VersionString = localVersionInfo.FileVersion ?? "N/A";
 
+            // First-run onboarding: login steps and the game-account-link pointer (prevents the common
+            // "earned but cannot claim" confusion). Shown once.
+            if (!Core.Managers.UISettingsManager.Instance.FirstRunCompleted)
+            {
+                try
+                {
+                    new OnboardingWindow { Owner = this }.ShowDialog();
+                }
+                catch (Exception ex)
+                {
+                    Core.Logging.AppLogger.Warn("App", $"Onboarding window failed: {ex.Message}");
+                    Core.Managers.UISettingsManager.Instance.FirstRunCompleted = true;
+                }
+            }
+
             string basePath = Path.Combine(Environment.ExpandEnvironmentVariables("%APPDATA%"), "Stream Loot");
             string updatePath = Path.Combine(basePath, "Update");
 

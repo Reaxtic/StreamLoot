@@ -384,20 +384,20 @@ namespace UI.Views
                     switch (status)
                     {
                         case "Idle":
-                            MinerStatus = "Idle";
-                            MinerStatusDetails = "Waiting for drops";
+                            MinerStatus = Loc.Instance["Status.Idle"];
+                            MinerStatusDetails = Loc.Instance["Status.IdleDetails"];
                             break;
                         case "Starting":
-                            MinerStatus = "Starting";
-                            MinerStatusDetails = "Finding stream(s) to watch";
+                            MinerStatus = Loc.Instance["Status.Starting"];
+                            MinerStatusDetails = Loc.Instance["Status.StartingDetails"];
                             break;
                         case "Evaluating":
-                            MinerStatus = "Evaluating";
-                            MinerStatusDetails = "Checking stream(s) for drops eligibility";
+                            MinerStatus = Loc.Instance["Status.Evaluating"];
+                            MinerStatusDetails = Loc.Instance["Status.EvaluatingDetails"];
                             break;
                         case "Mining":
-                            MinerStatus = "Mining";
-                            MinerStatusDetails = "Watching stream(s) to earn drops";
+                            MinerStatus = Loc.Instance["Status.Mining"];
+                            MinerStatusDetails = Loc.Instance["Status.MiningDetails"];
                             break;
                     }
                 });

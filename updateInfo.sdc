@@ -1,8 +1,13 @@
 {
-  "version": "1.0.3",
+  "version": "1.1.0",
   "type": "Feature",
-  "changelog": "Quiet background re-evaluations (no more card blinking or stream reloads), smart pin lifecycle (suspends when streamers are offline, returns when live, never abandons an unclaimed drop on a progress desync), ready-to-claim badge for unlinked game accounts, faster claim retries, and gentler Twitch polling.",
+  "changelog": "Self-healing after GPU/WebView2 crashes + engine watchdog, working auto-updater (GitHub Releases), Statistics page with claim history, drop ETA on campaigns, pin QUEUE (mine favourites in order), smooth animated progress bars, all-done notification with optional PC sleep, tray status tooltip, Polish language option, and a first-run guide.",
   "historic_versions": [
+    {
+      "version": "1.0.3",
+      "type": "Feature",
+      "changelog": "Quiet background re-evaluations (no more card blinking or stream reloads), smart pin lifecycle (suspends when streamers are offline, returns when live, never abandons an unclaimed drop on a progress desync), ready-to-claim badge for unlinked game accounts, faster claim retries, and gentler Twitch polling."
+    },
     {
       "version": "1.0.2",
       "type": "Feature",

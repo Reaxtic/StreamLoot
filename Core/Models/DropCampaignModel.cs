@@ -85,7 +85,8 @@ namespace Core.Models
         CampaignAvailability Availability = CampaignAvailability.Unknown,
         int OnlineChannels = 0,
         bool IsPinned = false,
-        bool IsStalled = false)
+        bool IsStalled = false,
+        int PinOrder = 0)
     {
         /// <summary>
         /// True when at least one reward is fully watched but still unclaimed — typically because the game account

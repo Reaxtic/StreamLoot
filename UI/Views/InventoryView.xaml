@@ -256,10 +256,11 @@
                                                 Padding="8,4"
                                                 Background="#22D3EE"
                                                 Visibility="{Binding IsPinned, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                            <TextBlock Text="📌 PINNED"
+                                            <TextBlock Text="{Binding PinOrder, StringFormat='📌 PINNED #{0}'}"
                                                        FontWeight="Bold"
                                                        FontSize="10"
-                                                       Foreground="Black"/>
+                                                       Foreground="Black"
+                                                       ToolTip="Position in the pin queue — #1 is mined first, the rest follow automatically."/>
                                         </Border>
 
                                         <!-- Ready-to-claim hint: fully watched but unclaimed (usually the game

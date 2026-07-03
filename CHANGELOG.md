@@ -3,6 +3,45 @@
 All notable changes to **Stream Loot** are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] — 2026-07-03
+
+A big functionality-and-polish release: self-healing, a working auto-updater,
+statistics, a pin queue, and a friendlier UI.
+
+### Reliability
+- **WebView2 crash recovery** — a GPU-driver crash used to leave the app
+  silently hung until a manual restart; the embedded browser now reloads a dead
+  renderer in place and re-initializes itself after a browser/GPU process crash.
+- **Engine watchdog** — if the mining engine produces no heartbeat for 10+
+  minutes, the loop restarts automatically.
+- **Working auto-updater** — updates now download the .zip asset of the latest
+  GitHub Release and apply themselves via a swap script (the old updater pointed
+  at a repo folder that never existed in git).
+- **Software rendering option** (Settings → Advanced) — run WebView2 with GPU
+  acceleration disabled on machines with unstable graphics drivers.
+
+### New features
+- **Statistics page** — watched minutes (today / 7 days / total) and a persisted
+  history of every claimed drop.
+- **Pin queue** — pin several campaigns; they are mined in order (#1 first) and
+  the next one is promoted automatically when the previous finishes. The badge
+  shows the queue position.
+- **Drop ETA** — Inventory cards show the estimated watch time to the next drop.
+- **All-done actions** — a notification when every campaign is mined and
+  claimed, with an optional "put the computer to sleep" (great for overnight
+  mining).
+- **Tray status** — hovering the tray icon shows what is being mined and at
+  what percentage.
+- **"NOT CREDITING" badge** — campaigns whose server progress is frozen are
+  flagged in the Inventory.
+
+### Polish & UX
+- **Smooth progress bars** — values glide instead of jumping, including server
+  corrections.
+- **Polish language option** (Settings → Advanced) for statuses and key labels.
+- **First-run guide** — a short welcome that walks through logins and the
+  game-account links (the #1 cause of "earned but cannot claim").
+
 ## [1.0.3] — 2026-07-03
 
 Focus: a calm dashboard (background re-evaluations), a smart pin lifecycle, and
@@ -119,6 +158,7 @@ Rebrand of "Stream Drop Collector" → **Stream Loot** (MIT fork; original autho
   [TwitchDropsMiner by DevilXD](https://github.com/DevilXD/TwitchDropsMiner) (MIT).
   No source code was copied; both projects are MIT-licensed.
 
+[1.1.0]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.1.0
 [1.0.3]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.0.3
 [1.0.2]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.0.2
 [1.0.1]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.0.1

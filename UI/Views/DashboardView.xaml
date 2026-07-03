@@ -4,6 +4,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008" xmlns:views="clr-namespace:UI.Views"
              xmlns:local="clr-namespace:UI"
+             xmlns:helpers="clr-namespace:UI.Helpers"
              mc:Ignorable="d"
              d:DesignHeight="650" d:DesignWidth="900"
              Background="{DynamicResource MainBackgroundBrush}">
@@ -269,7 +270,7 @@
                             </StackPanel>
 
                             <Grid Margin="0,12,0,0">
-                                <ProgressBar Minimum="0" Maximum="100" Value="{Binding TwitchCampaignProgress}"/>
+                                <ProgressBar Minimum="0" Maximum="100" helpers:ProgressAnimator.AnimatedValue="{Binding TwitchCampaignProgress}"/>
                                 <TextBlock Text="{Binding TwitchCampaignProgress, StringFormat='{}{0}%'}" HorizontalAlignment="Right" Margin="0,-18,0,0"
                                            FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}"/>
                             </Grid>
@@ -288,7 +289,7 @@
                             </StackPanel>
 
                             <Grid Margin="0,12,0,0">
-                                <ProgressBar Minimum="0" Maximum="100" Value="{Binding TwitchDropProgress}"/>
+                                <ProgressBar Minimum="0" Maximum="100" helpers:ProgressAnimator.AnimatedValue="{Binding TwitchDropProgress}"/>
                                 <TextBlock Text="{Binding TwitchDropProgress, StringFormat='{}{0}%'}" HorizontalAlignment="Right" Margin="0,-18,0,0"
                                            FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}"/>
                             </Grid>
@@ -412,7 +413,7 @@
                             </StackPanel>
 
                             <Grid Margin="0,12,0,0">
-                                <ProgressBar Minimum="0" Maximum="100" Value="{Binding KickCampaignProgress}"/>
+                                <ProgressBar Minimum="0" Maximum="100" helpers:ProgressAnimator.AnimatedValue="{Binding KickCampaignProgress}"/>
                                 <TextBlock Text="{Binding KickCampaignProgress, StringFormat='{}{0}%'}" HorizontalAlignment="Right" Margin="0,-18,0,0"
                                            FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}"/>
                             </Grid>
@@ -431,7 +432,7 @@
                             </StackPanel>
 
                             <Grid Margin="0,12,0,0">
-                                <ProgressBar Minimum="0" Maximum="100" Value="{Binding KickDropProgress}"/>
+                                <ProgressBar Minimum="0" Maximum="100" helpers:ProgressAnimator.AnimatedValue="{Binding KickDropProgress}"/>
                                 <TextBlock Text="{Binding KickDropProgress, StringFormat='{}{0}%'}" HorizontalAlignment="Right" Margin="0,-18,0,0"
                                            FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}"/>
                             </Grid>

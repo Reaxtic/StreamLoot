@@ -65,8 +65,8 @@ namespace UI.Views
         {
             if (sender is FrameworkElement fe && fe.DataContext is DropsCampaign campaign)
             {
-                // Toggle: clicking the already-pinned campaign unpins it (back to automatic selection).
-                await DropsInventoryManager.Instance.SetForcedCampaignAsync(campaign.IsPinned ? null : campaign.Id);
+                // Toggle within the pin QUEUE: unpinned → appended (mined after earlier pins), pinned → removed.
+                await DropsInventoryManager.Instance.SetForcedCampaignAsync(campaign.Id);
                 _campaignsView.Refresh();
             }
         }
