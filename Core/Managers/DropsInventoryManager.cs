@@ -112,6 +112,12 @@ namespace Core.Managers
         private volatile bool _pinSuspendedNoStreamers;
         private DateTime _pinSuspendedAt = DateTime.MinValue;
         private DateTime _lastPinOnlineCheck = DateTime.MinValue;
+
+        // Stall-triggered re-evaluations are throttled: when the stalled channel is the ONLY live option, rotation
+        // re-selects it and the stall flag stays set — without a throttle the health check would then force a
+        // re-evaluation every ~30s, visibly resetting the dashboard cards over and over.
+        private DateTime _lastTwitchStallReeval = DateTime.MinValue;
+        private DateTime _lastKickStallReeval = DateTime.MinValue;
         private readonly HashSet<string> _skipTwitchLogins = new(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _skipKickLogins = new(StringComparer.OrdinalIgnoreCase);
         // A channel the user explicitly picked (e.g. from the Dashboard channel list). It is watched directly,
@@ -2288,6 +2294,24 @@ namespace Core.Managers
                     bool kickStalled = (_currentKickCampaign != null && IsChannelStalled(Platform.Kick, _currentKickLogin))
                         || (_currentKickCampaign != null && IsNotCrediting(_currentKickCampaign.Id)
                             && !string.Equals(_forcedCampaignId, _currentKickCampaign.Id, StringComparison.Ordinal));
+
+                    // Throttle stall triggers to one re-evaluation per ~5 min. When rotation has no alternative
+                    // channel, the same stalled channel gets re-selected and the flag persists — untamed, that
+                    // forced a re-selection every health tick (~30-40s), visibly resetting the dashboard cards.
+                    if (twitchStalled)
+                    {
+                        if ((DateTime.Now - _lastTwitchStallReeval) < TimeSpan.FromMinutes(5))
+                            twitchStalled = false;
+                        else
+                            _lastTwitchStallReeval = DateTime.Now;
+                    }
+                    if (kickStalled)
+                    {
+                        if ((DateTime.Now - _lastKickStallReeval) < TimeSpan.FromMinutes(5))
+                            kickStalled = false;
+                        else
+                            _lastKickStallReeval = DateTime.Now;
+                    }
 
                     bool twitchNeedsReevaluation = (twitchCampaigns.Count != 0 && (!twitchOnline || !twitchCorrectCategory) && _lastKnownTwitchOnlineState) || twitchStalled || pinResumeTwitch;
                     bool kickNeedsReevaluation = (kickCampaigns.Count != 0 && (!kickOnline || !kickCorrectCategory) && _lastKnownKickOnlineState) || kickStalled || pinResumeKick;
