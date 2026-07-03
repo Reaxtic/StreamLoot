@@ -133,6 +133,12 @@
                                 <TextBlock Text="Inventory" VerticalAlignment="Center"/>
                             </StackPanel>
                         </RadioButton>
+                        <RadioButton Tag="Statistics" Click="SidebarButton_Click" Style="{StaticResource NavItemStyle}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE9D2;" FontSize="16" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                                <TextBlock Text="Statistics" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </RadioButton>
                         <RadioButton Tag="Settings" Click="SidebarButton_Click" Style="{StaticResource NavItemStyle}">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE713;" FontSize="16" VerticalAlignment="Center" Margin="0,0,14,0"/>

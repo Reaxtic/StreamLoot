@@ -217,6 +217,27 @@
                                             <Run Text="{Binding EndsAt, StringFormat=MMM dd • HH:mm}"/>
                                         </TextBlock>
 
+                                        <!-- Time to the next drop (empty when nothing left to watch) -->
+                                        <TextBlock Margin="12,0,0,0"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                                   FontSize="12"
+                                                   VerticalAlignment="Center"
+                                                   ToolTip="Estimated watch time until the next drop unlocks"
+                                                   Text="{Binding EtaText, Mode=OneWay}"/>
+
+                                        <!-- Stalled: the campaign is not crediting server-side right now -->
+                                        <Border Margin="8,0,0,0"
+                                                CornerRadius="6"
+                                                Padding="8,4"
+                                                Background="#EF4444"
+                                                ToolTip="Watching this campaign is currently NOT earning server progress (e.g. a broken game-account link or a rerun channel). The miner de-prioritises it automatically."
+                                                Visibility="{Binding IsStalled, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                            <TextBlock Text="⚠ NOT CREDITING"
+                                                       FontWeight="Bold"
+                                                       FontSize="10"
+                                                       Foreground="White"/>
+                                        </Border>
+
                                         <!-- WATCHING Badge -->
                                         <Border Margin="12,0,0,0"
                                                 CornerRadius="6"

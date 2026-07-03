@@ -127,6 +127,37 @@ namespace Core.Managers
         private DateTime _lastEngineHeartbeat = DateTime.Now;
         private int _watchdogRestarting;
 
+        // "Everything done" announcement (notification + optional PC sleep) fires once per completion, and re-arms
+        // when new campaigns with progress appear.
+        private bool _allDoneAnnounced;
+
+        [System.Runtime.InteropServices.DllImport("PowrProf.dll", SetLastError = true)]
+        private static extern bool SetSuspendState(bool hibernate, bool forceCritical, bool disableWakeEvent);
+
+        private void HandleEverythingDone(List<DropsCampaign> snapshot)
+        {
+            // Only celebrate a REAL completion: campaigns existed and every reward is claimed. An empty list or
+            // complete-but-unclaimable rewards (account link missing) is not "done".
+            bool everythingClaimed = snapshot.Count != 0 && snapshot.All(c => c.Rewards.All(r => r.IsClaimed));
+            if (!everythingClaimed || _allDoneAnnounced)
+                return;
+            _allDoneAnnounced = true;
+
+            AppLogger.Info("Miner", "All campaigns mined and claimed.");
+            NotificationManager.ShowNotification("Stream Loot", Loc.Instance["Status.AllDone"]);
+
+            if (UISettingsManager.Instance.SleepWhenDone)
+            {
+                _ = Task.Run(async () =>
+                {
+                    AppLogger.Info("Miner", "SleepWhenDone is enabled — putting the computer to sleep in 60s.");
+                    NotificationManager.ShowNotification("Stream Loot", "Everything is done — the computer will sleep in 60 seconds.", 60);
+                    await Task.Delay(TimeSpan.FromSeconds(60));
+                    SetSuspendState(false, false, false);
+                });
+            }
+        }
+
         private void EnsureWatchdog()
         {
             if (_watchdogStarted)
@@ -516,6 +547,7 @@ namespace Core.Managers
                     _twitchAppliedMinuteBucket = twitchMinuteBucket;
                     ApplyMinuteProgressToActiveCampaign(Platform.Twitch, currentTwitchCampaign.Id, minutesToApply);
                     ApplyMinuteProgressToCoProgressingCampaigns(Platform.Twitch, currentTwitchCampaign, minutesToApply);
+                    StatsManager.Instance.AddWatchedMinutes(Platform.Twitch, minutesToApply);
                 }
 
                 byte twitchCampPct = CalculateLiveCampaignProgress(currentTwitchCampaign);
@@ -545,6 +577,7 @@ namespace Core.Managers
                     _kickAppliedMinuteBucket = kickMinuteBucket;
                     ApplyMinuteProgressToActiveCampaign(Platform.Kick, currentKickCampaign.Id, minutesToApply);
                     ApplyMinuteProgressToCoProgressingCampaigns(Platform.Kick, currentKickCampaign, minutesToApply);
+                    StatsManager.Instance.AddWatchedMinutes(Platform.Kick, minutesToApply);
                 }
 
                 byte kickCampPct = CalculateLiveCampaignProgress(currentKickCampaign);
@@ -1455,6 +1488,8 @@ namespace Core.Managers
                         else
                             AppLogger.Warn("Miner", $"Failed to apply immediate claimed-state update. campaignId={parentCampaign.Id}, rewardId={item.Id}");
 
+                        StatsManager.Instance.AddClaimedDrop(parentCampaign.Platform, parentCampaign.Name, item.Name);
+
                         if (UISettingsManager.Instance.NotifyOnAutoClaimed)
                             NotificationManager.ShowNotification("Drop Claimed", $"Successfully claimed drop reward: {item.Name}");
                     }
@@ -1576,8 +1611,10 @@ namespace Core.Managers
                     _currentTwitchCampaign = null;
                     _currentKickCampaign = null;
                     UpdateCurrentSelectionFlags();
+                    HandleEverythingDone(snapshot);
                     return;
                 }
+                _allDoneAnnounced = false; // there is work again — re-arm the completion announcement
 
                 if (token.IsCancellationRequested)
                     return;
@@ -2246,6 +2283,7 @@ namespace Core.Managers
                     {
                         IsCurrentCampaign = isCurrentCampaign,
                         IsPinned = !string.IsNullOrWhiteSpace(_forcedCampaignId) && campaign.Id == _forcedCampaignId,
+                        IsStalled = IsNotCrediting(campaign.Id),
                         Rewards = updatedRewards
                     });
                 }

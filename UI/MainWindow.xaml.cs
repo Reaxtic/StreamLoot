@@ -99,8 +99,28 @@ namespace UI
             // Event handler for double-click on TaskbarIcon
             MyNotifyIcon.TrayMouseDoubleClick += OnTrayIconDoubleClick;
 
+            // Tray mini-status: hovering the tray icon shows what is being mined without opening the window.
+            System.Windows.Threading.DispatcherTimer trayStatusTimer = new() { Interval = TimeSpan.FromSeconds(30) };
+            trayStatusTimer.Tick += (_, _) => UpdateTrayTooltip();
+            trayStatusTimer.Start();
+
             // Default page
             SwitchPage(DashboardView.Instance);
+        }
+
+        private void UpdateTrayTooltip()
+        {
+            try
+            {
+                DashboardView d = DashboardView.Instance;
+                string twitch = string.IsNullOrEmpty(d.TwitchCampaignName) ? "—" : $"{d.TwitchCampaignName} ({d.TwitchCampaignProgress}%)";
+                string kick = string.IsNullOrEmpty(d.KickCampaignName) ? "—" : $"{d.KickCampaignName} ({d.KickCampaignProgress}%)";
+                MyNotifyIcon.ToolTipText = $"Stream Loot — {d.MinerStatus}\nTwitch: {twitch}\nKick: {kick}";
+            }
+            catch
+            {
+                // Tooltip refresh must never take the app down.
+            }
         }
 
         private void OnMainWindowLoaded(object sender, RoutedEventArgs e)
@@ -257,6 +277,7 @@ namespace UI
             {
                 "Dashboard" => _currentPage is DashboardView ? _currentPage : DashboardView.Instance,
                 "Inventory" => _currentPage is InventoryView ? _currentPage : InventoryView.Instance,
+                "Statistics" => _currentPage is StatisticsView ? _currentPage : StatisticsView.Instance,
                 "Settings" => _currentPage is SettingsView ? _currentPage : SettingsView.Instance,
                 "Help" => _currentPage is HelpView ? _currentPage : HelpView.Instance,
                 _ => null

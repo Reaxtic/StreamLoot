@@ -84,7 +84,8 @@ namespace Core.Models
         bool IsCurrentCampaign = false,
         CampaignAvailability Availability = CampaignAvailability.Unknown,
         int OnlineChannels = 0,
-        bool IsPinned = false)
+        bool IsPinned = false,
+        bool IsStalled = false)
     {
         /// <summary>
         /// True when at least one reward is fully watched but still unclaimed — typically because the game account
@@ -93,5 +94,24 @@ namespace Core.Models
         /// </summary>
         public bool HasClaimableUnclaimed =>
             Rewards.Any(r => !r.IsClaimed && r.RequiredMinutes > 0 && r.ProgressMinutes >= r.RequiredMinutes);
+
+        /// <summary>Minutes of watching left until the next unclaimed drop (int.MaxValue when none).</summary>
+        public int NextDropEtaMinutes =>
+            Rewards.Where(r => !r.IsClaimed && r.ProgressMinutes < r.RequiredMinutes)
+                   .Select(r => r.RequiredMinutes - r.ProgressMinutes)
+                   .DefaultIfEmpty(int.MaxValue)
+                   .Min();
+
+        /// <summary>Human-readable time to the next drop ("⏱ ~1h 23m"); empty when nothing is left to watch.</summary>
+        public string EtaText
+        {
+            get
+            {
+                int eta = NextDropEtaMinutes;
+                if (eta == int.MaxValue)
+                    return string.Empty;
+                return eta >= 60 ? $"⏱ ~{eta / 60}h {eta % 60}m" : $"⏱ ~{eta}m";
+            }
+        }
     }
 }
