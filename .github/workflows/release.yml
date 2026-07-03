@@ -42,9 +42,13 @@ jobs:
           $notes = if ($m.Success) { $m.Value.Trim() } else { "Stream Loot $tag" }
           Set-Content -Path notes.md -Value $notes -Encoding utf8
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: Stream Loot ${{ github.ref_name }}
-          body_path: notes.md
-          files: StreamLoot-${{ github.ref_name }}.zip
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Deterministic publish: drop any existing release for this tag (e.g. an empty draft left over from a
+          # manual attempt or a re-pushed tag) and create a fresh one with the notes and the zip.
+          gh release delete "${{ github.ref_name }}" --yes 2>$null
+          $global:LASTEXITCODE = 0
+          gh release create "${{ github.ref_name }}" "StreamLoot-${{ github.ref_name }}.zip" --title "Stream Loot ${{ github.ref_name }}" --notes-file notes.md
