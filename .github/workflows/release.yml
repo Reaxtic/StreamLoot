@@ -1,0 +1,50 @@
+name: Release
+
+# Pushing a version tag (v1.2.3) builds the app, zips it, pulls that version's
+# section out of CHANGELOG.md and publishes a GitHub Release with the notes and
+# the zip attached — no manual steps. The same zip also feeds the in-app
+# auto-updater.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish (self-contained win-x64)
+        run: dotnet publish UI/UI.csproj -c Release -r win-x64 --self-contained true -o "dist/StreamLoot-${{ github.ref_name }}"
+
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path "dist/StreamLoot-${{ github.ref_name }}" -DestinationPath "StreamLoot-${{ github.ref_name }}.zip" -CompressionLevel Optimal
+
+      - name: Extract release notes from CHANGELOG.md
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag.TrimStart("v")
+          $content = Get-Content CHANGELOG.md -Raw
+          $pattern = "(?ms)^## \[" + [regex]::Escape($version) + "\].*?(?=^## \[|\z)"
+          $m = [regex]::Match($content, $pattern)
+          $notes = if ($m.Success) { $m.Value.Trim() } else { "Stream Loot $tag" }
+          Set-Content -Path notes.md -Value $notes -Encoding utf8
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Stream Loot ${{ github.ref_name }}
+          body_path: notes.md
+          files: StreamLoot-${{ github.ref_name }}.zip
