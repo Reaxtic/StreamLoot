@@ -241,6 +241,20 @@
                                                        Foreground="Black"/>
                                         </Border>
 
+                                        <!-- Ready-to-claim hint: fully watched but unclaimed (usually the game
+                                             account isn't linked, so auto-claim can't collect it) -->
+                                        <Border Margin="8,0,0,0"
+                                                CornerRadius="6"
+                                                Padding="8,4"
+                                                Background="#F59E0B"
+                                                ToolTip="Fully watched but not claimed — link your game account on the drops page, then the reward can be collected."
+                                                Visibility="{Binding HasClaimableUnclaimed, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                            <TextBlock Text="🔗 READY — connect account to claim"
+                                                       FontWeight="Bold"
+                                                       FontSize="10"
+                                                       Foreground="Black"/>
+                                        </Border>
+
                                         <!-- Pin / Unpin this campaign (toggles _forcedCampaignId) -->
                                         <Button Margin="12,0,0,0"
                                                 Padding="10,4"

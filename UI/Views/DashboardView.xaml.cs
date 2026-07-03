@@ -666,9 +666,35 @@ namespace UI.Views
                 MinerStatus = "Loading Campaigns";
                 MinerStatusDetails = "Fetching latest drops...";
 
+                // Snapshot what we had before clearing, so a platform whose fetch FAILS (e.g. a Twitch integrity
+                // rejection returning zero campaigns) keeps its previous list instead of blanking the Inventory.
+                List<DropsCampaign> previousCampaigns = _activeCampaigns.ToList();
                 _activeCampaigns.Clear();
 
-                IReadOnlyList<DropsCampaign> allCampaigns = await _dropsService.GetAllActiveCampaignsAsync(_kickWebView, _kickService.Status, _twitchWebView, _twitchService.Status, _twitchGqlService, cts.Token);
+                IReadOnlyList<DropsCampaign> fetched = await _dropsService.GetAllActiveCampaignsAsync(_kickWebView, _kickService.Status, _twitchWebView, _twitchService.Status, _twitchGqlService, cts.Token);
+                List<DropsCampaign> allCampaigns = fetched.ToList();
+
+                // Per-platform retention: connected, previously had campaigns, but this fetch returned none for the
+                // platform -> treat as a failed fetch and keep the previous (still-active) entries. Ended campaigns
+                // are filtered out here and by UpdateCampaigns, so nothing expired is retained.
+                foreach (Platform platform in new[] { Platform.Twitch, Platform.Kick })
+                {
+                    bool connected = platform == Platform.Twitch
+                        ? _twitchService.Status == ConnectionStatus.Connected
+                        : _kickService.Status == ConnectionStatus.Connected;
+                    if (!connected || allCampaigns.Any(c => c.Platform == platform))
+                        continue;
+
+                    List<DropsCampaign> retained = previousCampaigns
+                        .Where(c => c.Platform == platform && c.StartsAt <= DateTimeOffset.Now && c.EndsAt > DateTimeOffset.Now)
+                        .ToList();
+                    if (retained.Count != 0)
+                    {
+                        allCampaigns.AddRange(retained);
+                        AppLogger.Warn("Dashboard", $"{platform} campaign fetch returned nothing (likely a transient failure) — keeping {retained.Count} previously loaded campaign(s) so the Inventory doesn't blank out.");
+                    }
+                }
+
                 AppLogger.Info("Dashboard", $"Campaign load completed. totalCampaigns={allCampaigns.Count}, twitchStatus={_twitchService.Status}, kickStatus={_kickService.Status}");
 
                 foreach (DropsCampaign? c in allCampaigns.OrderBy(x => x.Platform).ThenBy(x => x.GameName))

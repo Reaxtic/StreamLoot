@@ -84,5 +84,14 @@ namespace Core.Models
         bool IsCurrentCampaign = false,
         CampaignAvailability Availability = CampaignAvailability.Unknown,
         int OnlineChannels = 0,
-        bool IsPinned = false);
+        bool IsPinned = false)
+    {
+        /// <summary>
+        /// True when at least one reward is fully watched but still unclaimed — typically because the game account
+        /// isn't linked, so the auto-claim keeps failing. The Inventory shows a "ready to claim / connect account"
+        /// hint for these, and the miner does not keep watching them (no watch time left to earn).
+        /// </summary>
+        public bool HasClaimableUnclaimed =>
+            Rewards.Any(r => !r.IsClaimed && r.RequiredMinutes > 0 && r.ProgressMinutes >= r.RequiredMinutes);
+    }
 }

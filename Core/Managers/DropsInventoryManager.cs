@@ -3675,7 +3675,11 @@ namespace Core.Managers
         /// otherwise, false.</returns>
         public static bool HasProgressToMake(this DropsCampaign campaign)
         {
-            return campaign.Rewards.Any(r => !r.IsClaimed);
+            // Only rewards that still need WATCH TIME count as mineable progress. A fully-watched but unclaimed
+            // reward (e.g. the game account isn't linked, so the claim keeps failing) must NOT keep the miner
+            // parked on the campaign — watching earns nothing there. Claiming is handled separately by the
+            // periodic claim pass, and the Inventory shows a "ready to claim / connect account" hint instead.
+            return campaign.Rewards.Any(r => !r.IsClaimed && r.ProgressMinutes < r.RequiredMinutes);
         }
 
         /// <summary>
