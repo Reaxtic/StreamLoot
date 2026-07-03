@@ -3,6 +3,49 @@
 All notable changes to **Stream Loot** are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.0.3] — 2026-07-03
+
+Focus: a calm dashboard (background re-evaluations), a smart pin lifecycle, and
+never abandoning an earned drop.
+
+### Quiet re-evaluations
+- **No more card blinking** — re-evaluations run in the background; the previous
+  selection stays visible (and watched) until the outcome actually differs. Cards
+  are cleared only when a platform genuinely ends with nothing to watch.
+- **Keep-current actually works again** — the upfront reset used to null the
+  current channel, silently disabling the keep-current fast-path, so every
+  re-evaluation reloaded the stream (~10s of lost watching each time). Fixed for
+  Twitch, and Kick now also skips the reload when the same campaign + channel is
+  re-selected.
+- **Stall triggers throttled** — when the only live channel of a campaign isn't
+  crediting, the re-selection retries once per 5 minutes instead of every 30s.
+- Internal checks no longer flip the status to "Evaluating".
+
+### Pin (Mine this) lifecycle
+- **Offline pin falls back instead of idling** — when the pinned campaign has no
+  live streamers, the app temporarily mines the best other campaign and polls
+  cheaply (~3 min) until a pinned channel goes live, then returns to the pin.
+- **Auto-unpin only on hard evidence** — the pin clears when every reward is
+  claimed (or the campaign ends), NOT when the local counter merely shows 100%.
+  Previously a local/server desync (local 120/120 vs server 117/120) unpinned the
+  campaign and abandoned the drop at 98%.
+- **Desync self-heal** — a failed claim forces an immediate server reconcile, and
+  a pin-drift check returns mining to the pinned campaign so the remaining
+  minutes get watched and the drop actually claimed.
+
+### Claims & filters
+- **"READY — connect account to claim" badge** — fully watched but unclaimed
+  rewards (game account not linked) are flagged in the Inventory, and the miner
+  moves on instead of parking on a campaign with nothing left to watch.
+- **Failed claims retry every 10 minutes** (was: at the hourly refresh) — after
+  linking the game account the drop is collected within minutes.
+- **Inventory survives fetch failures** — a platform whose campaign fetch fails
+  keeps its previously loaded campaigns instead of blanking out.
+
+### Polling
+- **Gentler on Twitch** — the live/category eligibility probe is throttled to
+  ~2 min (was every 30s), reducing GQL traffic ~4×.
+
 ## [1.0.2] — 2026-06-23
 
 Focus: surviving Twitch's tightened drops-dashboard integrity checks, and never
@@ -76,4 +119,6 @@ Rebrand of "Stream Drop Collector" → **Stream Loot** (MIT fork; original autho
   [TwitchDropsMiner by DevilXD](https://github.com/DevilXD/TwitchDropsMiner) (MIT).
   No source code was copied; both projects are MIT-licensed.
 
+[1.0.3]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.0.3
+[1.0.2]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.0.2
 [1.0.1]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.0.1

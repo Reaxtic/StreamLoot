@@ -1,8 +1,13 @@
 {
-  "version": "1.0.2",
+  "version": "1.0.3",
   "type": "Feature",
-  "changelog": "Twitch integrity resilience: retry-with-backoff + native WebView dashboard fallback so campaigns load even when token-replay hits Twitch's integrity wall. Never mines ended campaigns, and auto-reloads a stale list after PC sleep. Fixed a bogus auto-update loop.",
+  "changelog": "Quiet background re-evaluations (no more card blinking or stream reloads), smart pin lifecycle (suspends when streamers are offline, returns when live, never abandons an unclaimed drop on a progress desync), ready-to-claim badge for unlinked game accounts, faster claim retries, and gentler Twitch polling.",
   "historic_versions": [
+    {
+      "version": "1.0.2",
+      "type": "Feature",
+      "changelog": "Twitch integrity resilience: retry-with-backoff + native WebView dashboard fallback so campaigns load even when token-replay hits Twitch's integrity wall. Never mines ended campaigns, and auto-reloads a stale list after PC sleep. Fixed a bogus auto-update loop."
+    },
     {
       "version": "1.0.1",
       "type": "Release",
