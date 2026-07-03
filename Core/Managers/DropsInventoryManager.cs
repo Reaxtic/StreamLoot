@@ -1468,32 +1468,15 @@ namespace Core.Managers
                 // Immediately stop the live progress timer to prevent ticks during unstable state
                 _liveProgressTimer?.Stop();
 
-                // Reset current selections and progress. When scoped to a single platform (e.g. the user
-                // switched a streamer there), leave the OTHER platform's selection/progress untouched.
-                bool resetTwitch = onlyPlatform != Platform.Kick;
-                bool resetKick = onlyPlatform != Platform.Twitch;
-
-                if (resetTwitch)
-                {
-                    _currentTwitchLogin = null;
-                    TwitchChannelChanged?.Invoke(string.Empty);
-                    TwitchCampaignChanged?.Invoke(string.Empty, null);
-                    _lastTwitchDropId = null;
-                    TwitchDropChanged?.Invoke(string.Empty, null);
-                    TwitchProgressChanged?.Invoke(0, 0);
+                // QUIET re-evaluation: keep the previous selection (state AND dashboard cards) while the new
+                // selection runs in the background. The UI changes only when the outcome actually differs, and a
+                // card is cleared explicitly only when its platform genuinely ends with nothing to watch. Clearing
+                // upfront caused visible card blinking on every re-evaluation — and nulling the current login here
+                // also killed the keep-current fast-path, forcing a disruptive re-navigation every time.
+                if (onlyPlatform != Platform.Kick)
                     _twitchAppliedMinuteBucket = _twitchWatchedSeconds / 60;
-                }
-
-                if (resetKick)
-                {
-                    _currentKickLogin = null;
-                    KickChannelChanged?.Invoke(string.Empty);
-                    KickCampaignChanged?.Invoke(string.Empty, null);
-                    _lastKickDropId = null;
-                    KickDropChanged?.Invoke(string.Empty, null);
-                    KickProgressChanged?.Invoke(0, 0);
+                if (onlyPlatform != Platform.Twitch)
                     _kickAppliedMinuteBucket = _kickWatchedSeconds / 60;
-                }
 
                 VerboseLog("StartWatching", $"AFTER reset | twitchApplied={_twitchAppliedMinuteBucket} | kickApplied={_kickAppliedMinuteBucket}");
 
@@ -1502,8 +1485,8 @@ namespace Core.Managers
 
                 if (!restartedInternally)
                     MinerStatusChanged?.Invoke("Starting");
-                else
-                    MinerStatusChanged?.Invoke("Evaluating");
+                // Internal re-evaluations stay quiet — the status keeps showing "Mining" while the check runs in
+                // the background; it flips to Mining/Idle at the end based on the outcome.
 
                 // Stop any existing timer
                 _recheckTimer?.Stop();
@@ -1803,7 +1786,18 @@ namespace Core.Managers
                     if (_currentTwitchCampaign == null)
                     {
                         AppLogger.Warn("TwitchSelection", $"No Twitch campaign passed eligibility checks. candidates={twitchCampaigns.Count}");
+                        // With quiet re-evaluations the card keeps showing the previous selection during the check,
+                        // so blank it explicitly now that Twitch genuinely ended with nothing to watch.
+                        ClearTwitchCard();
                     }
+                }
+                else if (onlyPlatform != Platform.Kick && _currentTwitchCampaign != null)
+                {
+                    // Twitch has no mineable campaigns anymore while something stale is still "watched" — stop it
+                    // and surface the idle state instead of ticking a finished campaign forever.
+                    _currentTwitchCampaign = null;
+                    UpdateCurrentSelectionFlags();
+                    ClearTwitchCard();
                 }
 
                 // ----------------------------------------------------------------
@@ -1850,6 +1844,11 @@ namespace Core.Managers
                             AppLogger.Warn("KickSelection", $"Kick pre-filter status lookup failed: {ex.Message}");
                         }
                     }
+
+                    // Remember the previous Kick selection so re-selecting the SAME stream skips the disruptive
+                    // re-navigation (which interrupts watching for ~10s and blinks the card).
+                    string? prevKickCampaignId = _currentKickCampaign?.Id;
+                    string? prevKickLogin = _currentKickLogin;
 
                     // Drop the previous Kick selection before re-picking: Kick has no keep-current fast-path, so if
                     // every candidate was pre-filtered out (all listed channels offline) the loop below won't run and
@@ -1910,12 +1909,23 @@ namespace Core.Managers
                             continue;
                         }
 
-                        await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.NavigateAsync(kickUrl));
-                        await Task.Delay(1500);
-                        await DismissKickMatureContentGateAsync();
-                        await SetKickStreamToLowestQualityAsync();
-                        await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.ForceRefreshAsync());
-                        await Task.Delay(5000);
+                        // Same campaign + same channel as before this re-evaluation: the stream is already playing,
+                        // so skip the re-navigation (it interrupts watching for ~10s and blinks the card).
+                        bool kickSameStream = string.Equals(bestKick.Id, prevKickCampaignId, StringComparison.Ordinal)
+                            && string.Equals(GetStreamerNameFromUrl(kickUrl), prevKickLogin, StringComparison.OrdinalIgnoreCase);
+                        if (kickSameStream)
+                        {
+                            AppLogger.Info("KickSelection", $"Kick stream '{kickUrl}' is already being watched — keeping it (no re-navigation).");
+                        }
+                        else
+                        {
+                            await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.NavigateAsync(kickUrl));
+                            await Task.Delay(1500);
+                            await DismissKickMatureContentGateAsync();
+                            await SetKickStreamToLowestQualityAsync();
+                            await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.ForceRefreshAsync());
+                            await Task.Delay(5000);
+                        }
 
                         _currentKickCampaign = bestKick;
                         bool kickOnline = await IsKickStreamOnline(GetStreamerNameFromUrl(kickUrl));
@@ -2003,6 +2013,14 @@ namespace Core.Managers
                         // bar climbs while nothing is actually being earned. Makes "no live channels — waiting" visible.
                         ClearKickCard();
                     }
+                }
+                else if (onlyPlatform != Platform.Twitch && _currentKickCampaign != null)
+                {
+                    // Kick has no mineable campaigns anymore while something stale is still "watched" — stop it.
+                    _currentKickCampaign = null;
+                    _currentKickLogin = null;
+                    UpdateCurrentSelectionFlags();
+                    ClearKickCard();
                 }
 
                 if (_currentTwitchCampaign == null && _currentKickCampaign == null)
@@ -2854,11 +2872,29 @@ namespace Core.Managers
         private void ClearKickCard()
         {
             _kickCurrentlyOnline = false;
+            _lastKickDropId = null;
             KickProgressChanged?.Invoke(0, 0);
             KickCampaignChanged?.Invoke("Waiting — no live channel", null);
             KickDropChanged?.Invoke(string.Empty, null);
             KickChannelChanged?.Invoke(string.Empty);
             KickStreamOnlineChanged?.Invoke(false);
+        }
+
+        /// <summary>
+        /// Resets the Twitch dashboard card to an explicit "waiting — no live channel" idle state. With quiet
+        /// re-evaluations (no upfront clearing) this is the only place the Twitch card gets blanked, so it happens
+        /// exactly when Twitch genuinely ends up with nothing to watch.
+        /// </summary>
+        private void ClearTwitchCard()
+        {
+            _twitchCurrentlyOnline = false;
+            _currentTwitchLogin = null;
+            _lastTwitchDropId = null;
+            TwitchProgressChanged?.Invoke(0, 0);
+            TwitchCampaignChanged?.Invoke("Waiting — no live channel", null);
+            TwitchDropChanged?.Invoke(string.Empty, null);
+            TwitchChannelChanged?.Invoke(string.Empty);
+            TwitchStreamOnlineChanged?.Invoke(false);
         }
 
         /// <summary>True when the campaign was flagged as not actually crediting (server progress frozen while watched).</summary>
