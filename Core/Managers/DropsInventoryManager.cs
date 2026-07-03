@@ -102,6 +102,9 @@ namespace Core.Managers
         private readonly HashSet<string> _stalledTwitchLogins = new(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _stalledKickLogins = new(StringComparer.OrdinalIgnoreCase);
         private DateTime _lastCreditMarksCleared = DateTime.Now;
+        // Failed claims are retried every ~10 min (see AutoClaimReadyRewardsAsync) — e.g. after the user links
+        // their game account, the pending reward is collected within minutes instead of at the hourly refresh.
+        private DateTime _lastFailedClaimMarksCleared = DateTime.Now;
         private readonly HashSet<string> _skipTwitchLogins = new(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _skipKickLogins = new(StringComparer.OrdinalIgnoreCase);
         // A channel the user explicitly picked (e.g. from the Dashboard channel list). It is watched directly,
@@ -1347,6 +1350,19 @@ namespace Core.Managers
 
             try
             {
+                // Give previously failed claims another chance every ~10 minutes (a claim retry is one tiny request
+                // per pending reward), instead of waiting for the hourly campaign refresh. Covers both cases:
+                // the server crediting the last minutes, and the user linking their game account in the meantime.
+                lock (_failedClaimRewardIds)
+                {
+                    if (_failedClaimRewardIds.Count != 0 && (DateTime.Now - _lastFailedClaimMarksCleared) > TimeSpan.FromMinutes(10))
+                    {
+                        _failedClaimRewardIds.Clear();
+                        _lastFailedClaimMarksCleared = DateTime.Now;
+                        AppLogger.Info("Miner", "Retrying previously failed claims (10-minute retry window).");
+                    }
+                }
+
                 // ActiveCampaigns is a UI-thread ObservableCollection (mutated by the minute tick and
                 // refreshes). This method may run on a timer thread, so snapshot it on the dispatcher —
                 // enumerating it directly here crashes with "Collection was modified".
