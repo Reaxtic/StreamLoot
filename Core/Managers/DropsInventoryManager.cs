@@ -105,6 +105,13 @@ namespace Core.Managers
         // Failed claims are retried every ~10 min (see AutoClaimReadyRewardsAsync) — e.g. after the user links
         // their game account, the pending reward is collected within minutes instead of at the hourly refresh.
         private DateTime _lastFailedClaimMarksCleared = DateTime.Now;
+
+        // Pin suspension: when the pinned campaign has NO live streamers, the pin is temporarily suspended and the
+        // miner falls back to the best available campaign. The health check polls (throttled) whether a pinned
+        // channel came back live and, when it did, lifts the suspension so mining returns to the user's choice.
+        private volatile bool _pinSuspendedNoStreamers;
+        private DateTime _pinSuspendedAt = DateTime.MinValue;
+        private DateTime _lastPinOnlineCheck = DateTime.MinValue;
         private readonly HashSet<string> _skipTwitchLogins = new(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _skipKickLogins = new(StringComparer.OrdinalIgnoreCase);
         // A channel the user explicitly picked (e.g. from the Dashboard channel list). It is watched directly,
@@ -665,6 +672,7 @@ namespace Core.Managers
         {
             string? previousForcedId = _forcedCampaignId;
             _forcedCampaignId = string.IsNullOrWhiteSpace(campaignId) ? null : campaignId;
+            _pinSuspendedNoStreamers = false; // any pin change starts fresh (a new pin gets its own live check)
             SaveForcedCampaignId(_forcedCampaignId); // persist so the pin survives a restart
             AppLogger.Info("Selection", _forcedCampaignId == null
                 ? "Cleared forced campaign; back to automatic selection."
@@ -1545,6 +1553,7 @@ namespace Core.Managers
                 {
                     AppLogger.Info("Selection", $"Pinned campaign {_forcedCampaignId} is completed/ended — auto-unpinning, returning to automatic selection.");
                     _forcedCampaignId = null;
+                    _pinSuspendedNoStreamers = false;
                     SaveForcedCampaignId(null);
                     UpdateCurrentSelectionFlags();
                 }
@@ -1579,7 +1588,10 @@ namespace Core.Managers
                         bool forcedPending;
                         lock (_lastStreamerSync) { forcedPending = _forcedTwitchStreamer != null; }
                         // Don't keep the current campaign if the user pinned a DIFFERENT one via "Mine this".
+                        // A SUSPENDED pin (streamers offline, mining a fallback) does not count — the fallback
+                        // stream should be held steady until the health check brings the pin back.
                         bool forcedToOther = !string.IsNullOrWhiteSpace(_forcedCampaignId)
+                            && !_pinSuspendedNoStreamers
                             && !string.Equals(_forcedCampaignId, _currentTwitchCampaign?.Id, StringComparison.Ordinal);
 
                         // Don't keep a campaign that was flagged as not actually crediting (server frozen while
@@ -1620,14 +1632,20 @@ namespace Core.Managers
                         }
                     }
 
-                    // If the user pinned a Twitch campaign via "Mine this", consider ONLY that campaign here. If its
-                    // channels are all offline, Twitch goes idle and waits for one to come live (idle-retry) instead
-                    // of wandering off to a different campaign the user didn't ask for.
+                    // Pinned campaign handling: attempt 0 tries ONLY the pinned campaign. If none of its streamers
+                    // is live, the pin is temporarily SUSPENDED — attempt 1 falls back to the best other campaign so
+                    // no time is wasted idling — and the health check returns to the pin as soon as a pinned channel
+                    // goes live again.
+                    bool twitchPinActive = !keepTwitch && !string.IsNullOrWhiteSpace(_forcedCampaignId) && twitchCampaigns.Any(c => c.Id == _forcedCampaignId);
+                    for (int selectionAttempt = 0; selectionAttempt < 2; selectionAttempt++)
+                    {
                     List<DropsCampaign> remainingTwitchCampaigns;
                     if (keepTwitch)
                         remainingTwitchCampaigns = new List<DropsCampaign>();
-                    else if (!string.IsNullOrWhiteSpace(_forcedCampaignId) && twitchCampaigns.Any(c => c.Id == _forcedCampaignId))
+                    else if (twitchPinActive && !_pinSuspendedNoStreamers)
                         remainingTwitchCampaigns = twitchCampaigns.Where(c => c.Id == _forcedCampaignId).ToList();
+                    else if (twitchPinActive)
+                        remainingTwitchCampaigns = twitchCampaigns.Where(c => c.Id != _forcedCampaignId).ToList();
                     else
                         remainingTwitchCampaigns = [.. twitchCampaigns];
 
@@ -1643,7 +1661,7 @@ namespace Core.Managers
                         // that merely ranks higher. Only fall back to priority ranking when neither applies.
                         // A user-forced channel wins; a "Mine this" pinned campaign (handled inside SelectBestCampaign)
                         // wins next; otherwise stay sticky on the campaign we're already watching; else pick by priority.
-                        bool campaignPinned = !string.IsNullOrWhiteSpace(_forcedCampaignId);
+                        bool campaignPinned = !string.IsNullOrWhiteSpace(_forcedCampaignId) && !_pinSuspendedNoStreamers;
                         DropsCampaign? bestTwitch =
                             forcedTwitchCampId != null
                                 ? remainingTwitchCampaigns.FirstOrDefault(c => c.Id == forcedTwitchCampId) ?? await SelectBestCampaign(remainingTwitchCampaigns)
@@ -1765,6 +1783,17 @@ namespace Core.Managers
                         break;
                     }
 
+                    // Selected, or nothing to fall back to — leave the attempt loop.
+                    if (_currentTwitchCampaign != null || !twitchPinActive || _pinSuspendedNoStreamers)
+                        break;
+
+                    // The pinned campaign produced no watchable stream (its streamers are offline) — suspend the pin
+                    // and retry with the other campaigns; the health check re-pins when someone goes live.
+                    _pinSuspendedNoStreamers = true;
+                    _pinSuspendedAt = DateTime.Now;
+                    AppLogger.Info("Selection", $"Pinned campaign {_forcedCampaignId} has no live streamers — temporarily mining other campaigns until one returns.");
+                    }
+
                     if (_currentTwitchCampaign == null)
                     {
                         AppLogger.Warn("TwitchSelection", $"No Twitch campaign passed eligibility checks. candidates={twitchCampaigns.Count}");
@@ -1779,48 +1808,36 @@ namespace Core.Managers
                     if (token.IsCancellationRequested)
                         return;
 
-                    // If the user pinned a Kick campaign, consider ONLY that one (idle/wait if its channels are
-                    // offline, rather than switching to a different campaign).
-                    List<DropsCampaign> remainingKickCampaigns =
-                        !string.IsNullOrWhiteSpace(_forcedCampaignId) && kickCampaigns.Any(c => c.Id == _forcedCampaignId)
-                            ? kickCampaigns.Where(c => c.Id == _forcedCampaignId).ToList()
-                            : [.. kickCampaigns];
+                    // Pinned campaign handling mirrors Twitch: attempt 0 tries ONLY the pinned campaign; if none of
+                    // its channels is live, the pin is temporarily suspended and attempt 1 mines the best other
+                    // campaign. The health check returns to the pin once a pinned channel goes live again.
+                    bool kickPinActive = !string.IsNullOrWhiteSpace(_forcedCampaignId) && kickCampaigns.Any(c => c.Id == _forcedCampaignId);
 
-                    // Pre-filter with ONE batched API call: drop campaigns whose listed channels are all offline,
-                    // so we never navigate to (visibly hop across) dead channels one-by-one. Campaigns without a
-                    // listed channel (true category drops) are kept for the directory fallback. A user-forced pick
-                    // is always kept. On any lookup failure we keep everything (old behaviour).
                     string? forcedKickPreId;
                     lock (_lastStreamerSync) { forcedKickPreId = _forcedKickStreamer?.CampaignId; }
 
-                    List<string> preflightSlugs = remainingKickCampaigns
+                    // ONE batched status call for the listed channels of ALL candidate campaigns, reused by both the
+                    // pin attempt and a possible fallback attempt. Campaigns without listed channels (true category
+                    // drops) are kept for the directory fallback. On lookup failure everything is kept (old behaviour).
+                    List<string> preflightSlugs = kickCampaigns
                         .SelectMany(CampaignChannelLogins)
                         .Distinct(StringComparer.OrdinalIgnoreCase)
                         .Take(60)
                         .ToList();
 
+                    Dictionary<string, int>? preStatus = null;
                     if (preflightSlugs.Count != 0)
                     {
-                        Dictionary<string, int> preStatus = new(StringComparer.OrdinalIgnoreCase);
                         try
                         {
                             string statusJson = await await Application.Current.Dispatcher.InvokeAsync(
                                 async () => await KickWebView!.FetchKickChannelStatusesAsync(preflightSlugs, 12000));
+                            Dictionary<string, int> statuses = new(StringComparer.OrdinalIgnoreCase);
                             using JsonDocument doc = JsonDocument.Parse(statusJson);
                             foreach (JsonProperty p in doc.RootElement.EnumerateObject())
                                 if (p.Value.ValueKind == JsonValueKind.Number)
-                                    preStatus[p.Name] = p.Value.GetInt32();
-
-                            int before = remainingKickCampaigns.Count;
-                            remainingKickCampaigns = remainingKickCampaigns.Where(c =>
-                            {
-                                if (c.Id == forcedKickPreId) return true;
-                                List<string> chans = CampaignChannelLogins(c);
-                                if (chans.Count == 0) return true; // category drop -> handled via directory
-                                return chans.Any(ch => preStatus.TryGetValue(ch, out int v) && v >= 0);
-                            }).ToList();
-
-                            AppLogger.Info("KickSelection", $"Pre-filtered Kick campaigns by live channel: {before} -> {remainingKickCampaigns.Count}.");
+                                    statuses[p.Name] = p.Value.GetInt32();
+                            preStatus = statuses;
                         }
                         catch (Exception ex)
                         {
@@ -1835,6 +1852,30 @@ namespace Core.Managers
                     _currentKickCampaign = null;
                     _currentKickLogin = null;
                     _kickCurrentlyOnline = false;
+
+                    for (int kickAttempt = 0; kickAttempt < 2; kickAttempt++)
+                    {
+                    List<DropsCampaign> remainingKickCampaigns;
+                    if (kickPinActive && !_pinSuspendedNoStreamers)
+                        remainingKickCampaigns = kickCampaigns.Where(c => c.Id == _forcedCampaignId).ToList();
+                    else if (kickPinActive)
+                        remainingKickCampaigns = kickCampaigns.Where(c => c.Id != _forcedCampaignId).ToList();
+                    else
+                        remainingKickCampaigns = [.. kickCampaigns];
+
+                    if (preStatus != null)
+                    {
+                        int before = remainingKickCampaigns.Count;
+                        remainingKickCampaigns = remainingKickCampaigns.Where(c =>
+                        {
+                            if (c.Id == forcedKickPreId) return true;
+                            List<string> chans = CampaignChannelLogins(c);
+                            if (chans.Count == 0) return true; // category drop -> handled via directory
+                            return chans.Any(ch => preStatus.TryGetValue(ch, out int v) && v >= 0);
+                        }).ToList();
+
+                        AppLogger.Info("KickSelection", $"Pre-filtered Kick campaigns by live channel: {before} -> {remainingKickCampaigns.Count}.");
+                    }
 
                     while (remainingKickCampaigns.Count != 0)
                     {
@@ -1936,6 +1977,17 @@ namespace Core.Managers
                         }
 
                         break;
+                    }
+
+                    // Selected, or nothing to fall back to — leave the attempt loop.
+                    if (_currentKickCampaign != null || !kickPinActive || _pinSuspendedNoStreamers)
+                        break;
+
+                    // The pinned campaign has no live channel — suspend the pin and retry with the other campaigns;
+                    // the health check re-pins when someone goes live.
+                    _pinSuspendedNoStreamers = true;
+                    _pinSuspendedAt = DateTime.Now;
+                    AppLogger.Info("Selection", $"Pinned campaign {_forcedCampaignId} has no live streamers — temporarily mining other campaigns until one returns.");
                     }
 
                     if (_currentKickCampaign == null)
@@ -2208,6 +2260,24 @@ namespace Core.Managers
                     // NOTE: an ad is NOT a reason to switch — Twitch keeps crediting drop watch time during ads, and
                     // switching channel/campaign on every ad caused needless thrashing (jumping off a perfectly good
                     // campaign). Only switch when the stream is actually offline or in the wrong category.
+                    // Pin resume: while the pin is suspended (its streamers were offline and we fell back to another
+                    // campaign), poll — throttled to ~3 min — whether a pinned channel came back live. When it did,
+                    // lift the suspension and re-evaluate the pin's platform so mining returns to the user's choice.
+                    bool pinResumeTwitch = false;
+                    bool pinResumeKick = false;
+                    if (_pinSuspendedNoStreamers && !string.IsNullOrWhiteSpace(_forcedCampaignId)
+                        && (DateTime.Now - _lastPinOnlineCheck) > TimeSpan.FromMinutes(3))
+                    {
+                        _lastPinOnlineCheck = DateTime.Now;
+                        DropsCampaign? pinned = ActiveCampaigns.FirstOrDefault(c => c.Id == _forcedCampaignId);
+                        if (pinned != null && await PinnedCampaignHasLiveChannelAsync(pinned))
+                        {
+                            AppLogger.Info("Selection", $"Pinned campaign '{pinned.Name}' has a live streamer again — returning to it.");
+                            _pinSuspendedNoStreamers = false;
+                            if (pinned.Platform == Platform.Twitch) pinResumeTwitch = true; else pinResumeKick = true;
+                        }
+                    }
+
                     // Re-evaluate when the watched stream isn't earning even though it's online:
                     //  - the current CHANNEL stalled (froze) → rotate to a fresh streamer of the same campaign
                     //    (this also applies to a PINNED campaign — the pin fixes the campaign, not the channel);
@@ -2219,8 +2289,8 @@ namespace Core.Managers
                         || (_currentKickCampaign != null && IsNotCrediting(_currentKickCampaign.Id)
                             && !string.Equals(_forcedCampaignId, _currentKickCampaign.Id, StringComparison.Ordinal));
 
-                    bool twitchNeedsReevaluation = (twitchCampaigns.Count != 0 && (!twitchOnline || !twitchCorrectCategory) && _lastKnownTwitchOnlineState) || twitchStalled;
-                    bool kickNeedsReevaluation = (kickCampaigns.Count != 0 && (!kickOnline || !kickCorrectCategory) && _lastKnownKickOnlineState) || kickStalled;
+                    bool twitchNeedsReevaluation = (twitchCampaigns.Count != 0 && (!twitchOnline || !twitchCorrectCategory) && _lastKnownTwitchOnlineState) || twitchStalled || pinResumeTwitch;
+                    bool kickNeedsReevaluation = (kickCampaigns.Count != 0 && (!kickOnline || !kickCorrectCategory) && _lastKnownKickOnlineState) || kickStalled || pinResumeKick;
 
                     // Idle retry: a platform with no selection but campaigns still worth mining (e.g. its
                     // campaign just completed, or no streamer was live earlier) re-attempts selection
@@ -2282,8 +2352,9 @@ namespace Core.Managers
         private Task<DropsCampaign?> SelectBestCampaign(List<DropsCampaign> campaigns)
         {
             // Manual override: if the user pinned a campaign and it's among the (still-progressing)
-            // candidates, mine that one instead of auto-prioritising.
-            if (!string.IsNullOrWhiteSpace(_forcedCampaignId))
+            // candidates, mine that one instead of auto-prioritising. Skipped while the pin is suspended
+            // (its streamers are offline) so the fallback can pick a campaign that's actually watchable.
+            if (!string.IsNullOrWhiteSpace(_forcedCampaignId) && !_pinSuspendedNoStreamers)
             {
                 DropsCampaign? forced = campaigns.FirstOrDefault(c => c.Id == _forcedCampaignId && c.HasProgressToMake());
                 if (forced != null)
@@ -2782,6 +2853,51 @@ namespace Core.Managers
             lock (_creditSync)
             {
                 return platform == Platform.Twitch ? _stalledTwitchLogins.Contains(login) : _stalledKickLogins.Contains(login);
+            }
+        }
+
+        /// <summary>
+        /// Cheap "is anyone live for this campaign" probe used to resume a suspended pin. Twitch channel-bound:
+        /// one batched persisted GQL; Twitch general: directory query. Kick channel-bound: channel API. Kick
+        /// general (no listed channels) has no cheap probe, so the pin is simply retried after ~10 minutes.
+        /// </summary>
+        private async Task<bool> PinnedCampaignHasLiveChannelAsync(DropsCampaign campaign)
+        {
+            try
+            {
+                List<string> logins = CampaignChannelLogins(campaign);
+                if (campaign.Platform == Platform.Twitch)
+                {
+                    if (_twitchGqlService == null)
+                        return false;
+                    if (logins.Count > 0)
+                    {
+                        List<string> live = await _twitchGqlService.QueryLiveChannelsBySlugAsync(logins.Take(40).ToList(), campaign.Slug);
+                        return live.Count > 0;
+                    }
+                    List<(string Login, int Viewers)> dir = await _twitchGqlService.QueryLiveDirectoryChannelsAsync(campaign.Slug, 5);
+                    return dir.Count > 0;
+                }
+
+                if (logins.Count > 0 && KickWebView != null)
+                {
+                    string json = await await Application.Current.Dispatcher.InvokeAsync(
+                        async () => await KickWebView.FetchKickChannelStatusesAsync(logins.Take(40).ToList(), 9000));
+                    using JsonDocument doc = JsonDocument.Parse(json);
+                    foreach (JsonProperty p in doc.RootElement.EnumerateObject())
+                        if (p.Value.ValueKind == JsonValueKind.Number && p.Value.GetInt32() >= 0)
+                            return true;
+                    return false;
+                }
+
+                // Kick general drop: probing needs the shared WebView (disruptive), so just retry the pin once it
+                // has been suspended for a while.
+                return (DateTime.Now - _pinSuspendedAt) > TimeSpan.FromMinutes(10);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("Selection", $"Pinned-campaign live check failed: {ex.Message}");
+                return false;
             }
         }
 
