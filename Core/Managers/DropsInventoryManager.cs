@@ -2561,6 +2561,20 @@ namespace Core.Managers
                 }
             }
 
+            // Finish-line override: a campaign within 30 minutes of unlocking its next drop is finished FIRST
+            // (least remaining minutes wins), regardless of the channel-specific-before-general bias below.
+            // Without this, the miner kept starting fresh campaigns while e.g. a 179/180 drop sat one minute
+            // from completion.
+            DropsCampaign? nearlyDone = campaigns
+                .Where(c => c.NextDropEtaMinutes <= 30)
+                .OrderBy(c => c.NextDropEtaMinutes)
+                .FirstOrDefault();
+            if (nearlyDone != null)
+            {
+                AppLogger.Info("Selection", $"Finish-line priority: '{nearlyDone.Name}' is {nearlyDone.NextDropEtaMinutes} min from its next drop — finishing it first.");
+                return Task.FromResult<DropsCampaign?>(nearlyDone);
+            }
+
             MiningPriorityMode mode = UISettingsManager.Instance.MiningPriorityMode;
             AppLogger.Debug("Selection", $"Selecting best campaign with mode={mode}, candidates={campaigns.Count}");
             List<DropsCampaign> prioritizedCampaigns = mode switch
