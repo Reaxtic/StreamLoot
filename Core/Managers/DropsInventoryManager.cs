@@ -95,7 +95,7 @@ namespace Core.Managers
         // campaign that really credits. Reset on every full campaign refresh so they're periodically retried.
         private readonly object _creditSync = new();
         private readonly HashSet<string> _notCreditingCampaignIds = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, (int Minutes, int FrozenCount)> _creditTracking = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, (int Minutes, int FrozenCount, DateTime LastSampleAt)> _creditTracking = new(StringComparer.Ordinal);
         // Channels (logins) whose server progress froze while watched — they earn nothing right now (e.g. a 24/7
         // rerun, or a channel that stopped running the campaign's drops). Avoided when picking a streamer so the
         // miner rotates to a fresh live channel of the SAME campaign instead of returning to the dead one.
@@ -3132,20 +3132,35 @@ namespace Core.Managers
             string? currentLogin = platform == Platform.Twitch ? _currentTwitchLogin : _currentKickLogin;
             bool pinned = string.Equals(_forcedCampaignId, campaignId, StringComparison.Ordinal);
 
+            // A finished-but-unclaimed reward pauses server progress at the drop boundary until the claim goes
+            // through (e.g. 180/180 waiting for auto-claim). That's NOT a crediting failure — flagging it here
+            // used to abandon campaigns one minute before the drop.
+            DropsCampaign? tracked = ActiveCampaigns.FirstOrDefault(c => c.Id == campaignId);
+            if (tracked != null && tracked.HasClaimableUnclaimed)
+            {
+                lock (_creditSync) { _creditTracking[campaignId] = (serverMinutes, 0, DateTime.Now); }
+                return;
+            }
+
             lock (_creditSync)
             {
-                if (_creditTracking.TryGetValue(campaignId, out (int Minutes, int FrozenCount) prev))
+                if (_creditTracking.TryGetValue(campaignId, out (int Minutes, int FrozenCount, DateTime LastSampleAt) prev))
                 {
                     if (serverMinutes > prev.Minutes)
                     {
                         // Progress resumed — this campaign AND its current channel are crediting again.
-                        _creditTracking[campaignId] = (serverMinutes, 0);
+                        _creditTracking[campaignId] = (serverMinutes, 0, DateTime.Now);
                         _notCreditingCampaignIds.Remove(campaignId);
                     }
                     else
                     {
+                        // Ignore samples taken too soon after the previous one — a failed claim forces an immediate
+                        // reconcile, and two readings seconds apart say nothing about whether the server credits.
+                        if ((DateTime.Now - prev.LastSampleAt) < TimeSpan.FromMinutes(2.5))
+                            return;
+
                         int frozen = prev.FrozenCount + 1;
-                        _creditTracking[campaignId] = (serverMinutes, frozen);
+                        _creditTracking[campaignId] = (serverMinutes, frozen, DateTime.Now);
                         if (frozen >= 2)
                         {
                             // The channel we're watching isn't earning — blacklist it so selection rotates to a
@@ -3157,7 +3172,7 @@ namespace Core.Managers
                                 if (stalled.Add(currentLogin))
                                     AppLogger.Warn("Selection", $"Channel '{currentLogin}' not crediting campaign {campaignId} (server frozen at {serverMinutes}m) — rotating to another streamer.");
                             }
-                            _creditTracking[campaignId] = (serverMinutes, 0);
+                            _creditTracking[campaignId] = (serverMinutes, 0, DateTime.Now);
 
                             // Only give up on the whole campaign (skip it) when it's NOT pinned. A pinned campaign is
                             // the user's explicit choice, so we keep it and just hop channels.
@@ -3168,7 +3183,7 @@ namespace Core.Managers
                 }
                 else
                 {
-                    _creditTracking[campaignId] = (serverMinutes, 0);
+                    _creditTracking[campaignId] = (serverMinutes, 0, DateTime.Now);
                 }
             }
         }
