@@ -1679,7 +1679,10 @@ namespace Core.Managers
                         int removed = _pinnedQueue.RemoveAll(id =>
                         {
                             DropsCampaign? c = snapshot.FirstOrDefault(x => x.Id == id);
-                            return c == null || !c.IsWithinActiveWindow() || c.Rewards.All(r => r.IsClaimed);
+                            // Remove only on POSITIVE evidence (campaign present and finished/ended). A campaign
+                            // merely missing from the list — e.g. a transient Twitch fetch failure — must NOT drop
+                            // the pin: that silently wiped user pins whenever one platform's fetch hiccupped.
+                            return c != null && (!c.IsWithinActiveWindow() || c.Rewards.All(r => r.IsClaimed));
                         });
                         if (removed > 0)
                         {
