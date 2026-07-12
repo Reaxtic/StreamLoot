@@ -155,6 +155,7 @@ namespace Core.Managers
         private System.Threading.Timer? _watchdogTimer;
         private DateTime _lastEngineHeartbeat = DateTime.Now;
         private int _watchdogRestarting;
+        private int _hardRestarting;
 
         // "Everything done" announcement (notification + optional PC sleep) fires once per completion, and re-arms
         // when new campaigns with progress appear.
@@ -192,28 +193,52 @@ namespace Core.Managers
             if (_watchdogStarted)
                 return;
             _watchdogStarted = true;
-            _watchdogTimer = new System.Threading.Timer(async _ =>
+            // Runs on a plain background-thread Timer (NOT the UI dispatcher), so it stays alive even when the UI
+            // thread itself is wedged.
+            _watchdogTimer = new System.Threading.Timer(_ =>
             {
                 try
                 {
-                    if (_isPaused || (DateTime.Now - _lastEngineHeartbeat) < TimeSpan.FromMinutes(10))
+                    if (_isPaused)
                         return;
-                    if (Interlocked.CompareExchange(ref _watchdogRestarting, 1, 0) != 0)
-                        return;
-                    try
+
+                    double silentMin = (DateTime.Now - _lastEngineHeartbeat).TotalMinutes;
+
+                    // Escalation: after 6 min of silence, try a soft loop restart (cheap, no visible restart). After
+                    // 12 min the UI thread is almost certainly wedged — a soft restart routes through the dispatcher
+                    // and would hang too, so hard-restart the whole PROCESS. The WebView2 login profile lives on
+                    // disk, so a relaunch keeps the user signed in.
+                    if (silentMin >= 12)
                     {
-                        AppLogger.Warn("Watchdog", $"Engine silent for {(DateTime.Now - _lastEngineHeartbeat).TotalMinutes:F0} min — restarting the mining loop.");
-                        _lastEngineHeartbeat = DateTime.Now;
-                        await StartWatchingStreams(true);
+                        // Separate one-shot guard: must NOT be gated by the soft-restart flag, because a wedged UI
+                        // leaves that flag stuck at 1 — the very case where the hard restart is needed.
+                        if (Interlocked.CompareExchange(ref _hardRestarting, 1, 0) != 0)
+                            return;
+                        AppLogger.Error("Watchdog", $"Engine silent for {silentMin:F0} min and a soft restart didn't recover — hard-restarting the process.");
+                        try
+                        {
+                            string? exe = Environment.ProcessPath;
+                            if (!string.IsNullOrEmpty(exe))
+                                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe, "--updated") { UseShellExecute = true });
+                        }
+                        catch (Exception ex) { AppLogger.Error("Watchdog", "Relaunch failed.", ex); }
+                        Environment.Exit(0);
+                        return;
                     }
-                    finally
+
+                    if (silentMin >= 6)
                     {
-                        Interlocked.Exchange(ref _watchdogRestarting, 0);
+                        if (Interlocked.CompareExchange(ref _watchdogRestarting, 1, 0) != 0)
+                            return;
+                        AppLogger.Warn("Watchdog", $"Engine silent for {silentMin:F0} min — restarting the mining loop.");
+                        _lastEngineHeartbeat = DateTime.Now;
+                        _ = StartWatchingStreams(true).ContinueWith(_ => Interlocked.Exchange(ref _watchdogRestarting, 0));
                     }
                 }
                 catch (Exception ex)
                 {
                     AppLogger.Error("Watchdog", "Watchdog tick failed.", ex);
+                    Interlocked.Exchange(ref _watchdogRestarting, 0);
                 }
             }, null, TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(2));
         }
