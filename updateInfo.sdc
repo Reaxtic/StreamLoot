@@ -1,8 +1,13 @@
 {
-  "version": "1.1.0",
-  "type": "Feature",
-  "changelog": "Self-healing after GPU/WebView2 crashes + engine watchdog, working auto-updater (GitHub Releases), Statistics page with claim history, drop ETA on campaigns, pin QUEUE (mine favourites in order), smooth animated progress bars, all-done notification with optional PC sleep, tray status tooltip, Polish language option, and a first-run guide.",
+  "version": "1.1.1",
+  "type": "Patch",
+  "changelog": "Stability: hard-restart watchdog recovers a wedged app on its own, sleep/resume aware engine (no more frozen-after-sleep), finish-line priority so a drop is never abandoned at 99%, per-platform pins mined simultaneously, and pins that survive fetch hiccups.",
   "historic_versions": [
+    {
+      "version": "1.1.0",
+      "type": "Feature",
+      "changelog": "Self-healing after GPU/WebView2 crashes + engine watchdog, working auto-updater (GitHub Releases), Statistics page with claim history, drop ETA on campaigns, pin QUEUE (mine favourites in order), smooth animated progress bars, all-done notification with optional PC sleep, tray status tooltip, Polish language option, and a first-run guide."
+    },
     {
       "version": "1.0.3",
       "type": "Feature",

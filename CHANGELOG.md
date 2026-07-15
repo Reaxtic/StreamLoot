@@ -3,6 +3,39 @@
 All notable changes to **Stream Loot** are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.1.1] — 2026-07-15
+
+Stability release: the app now survives sleep, network drops and wedged UI
+threads on its own, and stops abandoning drops that are one minute from done.
+
+### Never gets stuck again
+- **Hard-restart watchdog** — if the engine goes silent for 12 minutes (a wedged
+  UI thread, a hung network call), the app relaunches itself. The old watchdog
+  tried to recover through the UI thread — useless when that thread is the thing
+  that's stuck. You stay signed in across the restart.
+- **Sleep/resume aware** — the engine is paused before the machine sleeps (so no
+  request hangs on a vanishing connection, which used to freeze the app until a
+  manual restart) and forces a clean reload ~8s after resume.
+- **The watchdog can no longer disable itself** — a stuck "paused"/"suspending"
+  flag previously switched recovery off permanently; the hard-restart path now
+  ignores those flags, because a pause that outlasts the threshold *is* the hang.
+
+### Mining correctness
+- **Doesn't abandon a drop at 99%** — a finished-but-unclaimed reward pauses
+  server progress until the claim lands; that pause is no longer mistaken for
+  "not crediting" (which used to drop the campaign one minute before the reward).
+- **Finish-line priority** — a campaign within 30 minutes of its next drop is
+  mined first, instead of losing to a freshly started one.
+- **Per-platform pins** — the first pinned Twitch campaign and the first pinned
+  Kick campaign are now mined *simultaneously*. Previously only queue position #1
+  counted, so a Twitch pin behind two Kick pins was treated as unpinned — and got
+  blacklisted outright when its channel stalled.
+- **Queued pins are never blacklisted** — any campaign in the queue rotates
+  channels instead of being excluded from mining.
+- **Pins survive fetch hiccups** — a pin is only dropped from the queue on
+  positive evidence (campaign present and finished), not when it's briefly
+  missing from a failed fetch.
+
 ## [1.1.0] — 2026-07-03
 
 A big functionality-and-polish release: self-healing, a working auto-updater,
@@ -158,6 +191,7 @@ Rebrand of "Stream Drop Collector" → **Stream Loot** (MIT fork; original autho
   [TwitchDropsMiner by DevilXD](https://github.com/DevilXD/TwitchDropsMiner) (MIT).
   No source code was copied; both projects are MIT-licensed.
 
+[1.1.1]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.1.1
 [1.1.0]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.1.0
 [1.0.3]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.0.3
 [1.0.2]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.0.2
