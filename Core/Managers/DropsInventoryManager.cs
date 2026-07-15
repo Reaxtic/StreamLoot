@@ -160,11 +160,13 @@ namespace Core.Managers
         // Set while Windows is suspending: network operations are aborted and paused so nothing hangs on a
         // vanishing connection during sleep (the #1 cause of a wake-up-to-a-frozen-engine).
         private volatile bool _systemSuspending;
+        private DateTime _suspendingSince = DateTime.MinValue;
 
         /// <summary>Called on Windows suspend: cancel any in-flight selection and stop touching the network.</summary>
         public void OnSystemSuspend()
         {
             _systemSuspending = true;
+            _suspendingSince = DateTime.Now;
             try { _startWatchingCts?.Cancel(); } catch { }
             AppLogger.Info("Power", "System is suspending — engine paused, in-flight work cancelled.");
         }
@@ -223,10 +225,22 @@ namespace Core.Managers
             {
                 try
                 {
-                    if (_isPaused || _systemSuspending)
-                        return;
+                    // While Windows is suspending, don't count silence — the machine is going to sleep. BUT if this
+                    // timer keeps ticking long after the suspend, the machine is clearly awake and the resume event
+                    // never arrived (or the UI thread is wedged), so treat it as a hang.
+                    if (_systemSuspending)
+                    {
+                        if ((DateTime.Now - _suspendingSince) <= TimeSpan.FromMinutes(5))
+                            return;
+                        AppLogger.Warn("Watchdog", "Suspend flag stuck (resume never arrived) — treating as a hang.");
+                    }
 
                     double silentMin = (DateTime.Now - _lastEngineHeartbeat).TotalMinutes;
+
+                    // NOTE: _isPaused is deliberately NOT an early-out here. A pause lasts seconds (campaign
+                    // refresh); if it lasts longer than the hard-restart threshold, the refresh itself hung and the
+                    // flag is stuck — which is exactly the case the watchdog must recover from. Gating on it left
+                    // the app dead for hours with the watchdog silently disabled.
 
                     // Escalation: after 6 min of silence, try a soft loop restart (cheap, no visible restart). After
                     // 12 min the UI thread is almost certainly wedged — a soft restart routes through the dispatcher
@@ -249,6 +263,10 @@ namespace Core.Managers
                         Environment.Exit(0);
                         return;
                     }
+
+                    // A soft restart only makes sense when nothing else is legitimately running.
+                    if (_isPaused)
+                        return;
 
                     if (silentMin >= 6)
                     {
