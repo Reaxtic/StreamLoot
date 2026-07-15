@@ -1,4 +1,5 @@
 using System.Windows.Threading;
+using System.Threading.Tasks;
 using Microsoft.Win32;
 using System.IO.Pipes;
 using System.Windows;
@@ -81,6 +82,28 @@ namespace UI
 
             // REACT TO WINDOWS THEME CHANGE IN REAL TIME
             SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
+
+            // React to sleep/resume: pause the engine before sleep (so nothing hangs on a vanishing connection),
+            // and force a clean reload after resume (WebView sessions/streams are stale after sleep).
+            SystemEvents.PowerModeChanged += OnPowerModeChanged;
+        }
+
+        private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
+        {
+            switch (e.Mode)
+            {
+                case PowerModes.Suspend:
+                    DropsInventoryManager.Instance.OnSystemSuspend();
+                    break;
+                case PowerModes.Resume:
+                    // Give the network stack a few seconds to come back before reloading.
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(8));
+                        DropsInventoryManager.Instance.OnSystemResume();
+                    });
+                    break;
+            }
         }
 
         private static void TryActivateExistingInstance()
@@ -158,6 +181,7 @@ namespace UI
         protected override void OnExit(ExitEventArgs e)
         {
             SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
+            SystemEvents.PowerModeChanged -= OnPowerModeChanged;
             base.OnExit(e);
         }
 

@@ -157,6 +157,30 @@ namespace Core.Managers
         private int _watchdogRestarting;
         private int _hardRestarting;
 
+        // Set while Windows is suspending: network operations are aborted and paused so nothing hangs on a
+        // vanishing connection during sleep (the #1 cause of a wake-up-to-a-frozen-engine).
+        private volatile bool _systemSuspending;
+
+        /// <summary>Called on Windows suspend: cancel any in-flight selection and stop touching the network.</summary>
+        public void OnSystemSuspend()
+        {
+            _systemSuspending = true;
+            try { _startWatchingCts?.Cancel(); } catch { }
+            AppLogger.Info("Power", "System is suspending — engine paused, in-flight work cancelled.");
+        }
+
+        /// <summary>
+        /// Called shortly after Windows resumes (network back up): the WebView sessions and streams are stale after
+        /// sleep, so reload campaigns and restart mining from scratch instead of waiting for the watchdog.
+        /// </summary>
+        public void OnSystemResume()
+        {
+            _systemSuspending = false;
+            _lastEngineHeartbeat = DateTime.Now; // don't let the watchdog count the sleep as a hang
+            AppLogger.Info("Power", "System resumed — reloading campaigns and restarting mining.");
+            ReloadCampaignsRequested?.Invoke();
+        }
+
         // "Everything done" announcement (notification + optional PC sleep) fires once per completion, and re-arms
         // when new campaigns with progress appear.
         private bool _allDoneAnnounced;
@@ -199,7 +223,7 @@ namespace Core.Managers
             {
                 try
                 {
-                    if (_isPaused)
+                    if (_isPaused || _systemSuspending)
                         return;
 
                     double silentMin = (DateTime.Now - _lastEngineHeartbeat).TotalMinutes;
@@ -353,7 +377,7 @@ namespace Core.Managers
             try
             {
                 string? login = _currentTwitchLogin;
-                if (!_isPaused && _twitchGqlService != null && !string.IsNullOrWhiteSpace(login))
+                if (!_isPaused && !_systemSuspending && _twitchGqlService != null && !string.IsNullOrWhiteSpace(login))
                     await _twitchGqlService.SendWatchHeartbeatAsync(login!);
             }
             catch (Exception ex)
@@ -2399,6 +2423,10 @@ namespace Core.Managers
             {
                 try
                 {
+                // While Windows is suspending, don't fire network operations onto a vanishing connection.
+                if (_systemSuspending)
+                    return;
+
                 // Claim any drops that finished since the last check (fast claim, ~30s instead of waiting
                 // for the next full refresh).
                 await AutoClaimReadyRewardsAsync();
