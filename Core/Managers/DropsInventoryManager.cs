@@ -123,17 +123,23 @@ namespace Core.Managers
         /// platform honours its own queue front, so pinning e.g. two Kick campaigns and one Twitch campaign mines
         /// the first Kick pin AND the Twitch pin simultaneously — they don't block each other across platforms.
         /// </summary>
-        private string? ActivePinFor(Platform platform)
+        private string? ActivePinFor(Platform platform) => PinsFor(platform).FirstOrDefault();
+
+        /// <summary>
+        /// All queued pins belonging to this platform, in queue order. Selection walks this list and mines the first
+        /// one that actually has a live channel — otherwise a pin whose streamers are offline (#1) would block the
+        /// ones behind it (#2, #3) that ARE live, and the app would fall back to automatic picks instead.
+        /// </summary>
+        private List<string> PinsFor(Platform platform)
         {
             List<DropsCampaign> snapshot;
             lock (_campaignSnapshotSync) { snapshot = _lastKnownCampaigns; }
             lock (_pinnedQueue)
             {
-                foreach (string id in _pinnedQueue)
-                    if (snapshot?.FirstOrDefault(c => c.Id == id)?.Platform == platform)
-                        return id;
+                return _pinnedQueue
+                    .Where(id => snapshot?.FirstOrDefault(c => c.Id == id)?.Platform == platform)
+                    .ToList();
             }
-            return null;
         }
 
         /// <summary>True when the campaign sits anywhere in the pin queue (the user's explicit choice).</summary>
@@ -2031,8 +2037,10 @@ namespace Core.Managers
                     // Pinned campaign handling mirrors Twitch: attempt 0 tries ONLY the pinned campaign; if none of
                     // its channels is live, the pin is temporarily suspended and attempt 1 mines the best other
                     // campaign. The health check returns to the pin once a pinned channel goes live again.
-                    string? kickPin = ActivePinFor(Platform.Kick);
-                    bool kickPinActive = kickPin != null && kickCampaigns.Any(c => c.Id == kickPin);
+                    // Resolved AFTER the live-status lookup below: the first queued Kick pin that actually has a live
+                    // channel. A pin whose streamers are all offline must not block the pins behind it.
+                    string? kickPin = null;
+                    bool kickPinActive = false;
 
                     string? forcedKickPreId;
                     lock (_lastStreamerSync) { forcedKickPreId = _forcedKickStreamer?.CampaignId; }
@@ -2064,6 +2072,35 @@ namespace Core.Managers
                         {
                             AppLogger.Warn("KickSelection", $"Kick pre-filter status lookup failed: {ex.Message}");
                         }
+                    }
+
+                    // Pick the first queued Kick pin that has a live channel (category drops without listed channels
+                    // always qualify — the directory decides). Without this, an offline pin at #1 blocked a live pin
+                    // at #3 and the app fell back to automatic picks instead of mining the user's choice.
+                    bool KickPinHasLiveChannel(DropsCampaign c)
+                    {
+                        List<string> chans = CampaignChannelLogins(c);
+                        if (chans.Count == 0 || preStatus == null)
+                            return true;
+                        return chans.Any(ch => preStatus.TryGetValue(ch, out int v) && v >= 0);
+                    }
+
+                    foreach (string pinId in PinsFor(Platform.Kick))
+                    {
+                        DropsCampaign? pinnedCampaign = kickCampaigns.FirstOrDefault(c => c.Id == pinId);
+                        if (pinnedCampaign != null && KickPinHasLiveChannel(pinnedCampaign))
+                        {
+                            kickPin = pinId;
+                            kickPinActive = true;
+                            _kickPinSuspended = false; // a live pin is available again
+                            break;
+                        }
+                    }
+                    if (kickPin == null && PinsFor(Platform.Kick).Count != 0 && !_kickPinSuspended)
+                    {
+                        _kickPinSuspended = true;
+                        _kickPinSuspendedAt = DateTime.Now;
+                        AppLogger.Info("Selection", "No pinned Kick campaign has a live streamer — temporarily mining other campaigns until one returns.");
                     }
 
                     // Remember the previous Kick selection so re-selecting the SAME stream skips the disruptive
@@ -2485,7 +2522,13 @@ namespace Core.Managers
                     }
                     bool twitchShowingAd = _currentTwitchCampaign != null && await IsTwitchShowingAd();
                     bool kickOnline = _currentKickCampaign != null && await IsKickStreamOnline();
-                    bool kickCorrectCategory = _currentKickCampaign != null && await IsKickStreamCategoryCorrect();
+                    // Channel-bound campaigns (Football Drop, Stake, …) earn on their listed channel regardless of
+                    // what it currently streams, so category is irrelevant — exactly as the selection path decides.
+                    // Checking it here anyway made the health check declare a perfectly good stream "wrong category"
+                    // and force a full re-selection every 30s, which re-navigated the player and stopped Kick from
+                    // crediting at all.
+                    bool kickCorrectCategory = _currentKickCampaign != null
+                        && (CampaignChannelLogins(_currentKickCampaign).Count > 0 || await IsKickStreamCategoryCorrect());
 
                     AppLogger.Debug("HealthCheck", $"Twitch: {(twitchOnline ? "ONLINE" : "OFFLINE")} | Kick: {(kickOnline ? "ONLINE" : "OFFLINE")}");
                     AppLogger.Debug("HealthCheck", $"Twitch category correct: {twitchCorrectCategory} | Kick category correct: {kickCorrectCategory} | Twitch showing ad: {twitchShowingAd}");
@@ -2524,33 +2567,36 @@ namespace Core.Managers
 
                     foreach (Platform platform in new[] { Platform.Twitch, Platform.Kick })
                     {
-                        string? pinId = ActivePinFor(platform);
-                        if (pinId == null)
+                        List<string> pins = PinsFor(platform);
+                        if (pins.Count == 0)
                             continue;
-                        DropsCampaign? pinned = ActiveCampaigns.FirstOrDefault(c => c.Id == pinId);
-                        if (pinned == null)
+                        string? currentId = platform == Platform.Twitch ? _currentTwitchCampaign?.Id : _currentKickCampaign?.Id;
+
+                        // A pinned campaign of this platform is already being mined — nothing to do.
+                        if (currentId != null && pins.Contains(currentId))
                             continue;
 
-                        if (IsPinSuspended(platform))
+                        // Walk the queue: return to the FIRST pin that has a live channel. Checking every pin (not
+                        // just the queue front) means an offline pin can't keep a live one behind it from being mined.
+                        foreach (string pinId in pins)
                         {
-                            // Suspended (streamers were offline): poll whether a pinned channel came back live.
-                            if (pinCheckDue && await PinnedCampaignHasLiveChannelAsync(pinned))
-                            {
-                                AppLogger.Info("Selection", $"Pinned campaign '{pinned.Name}' has a live streamer again — returning to it.");
-                                if (platform == Platform.Twitch) { _twitchPinSuspended = false; pinResumeTwitch = true; }
-                                else { _kickPinSuspended = false; pinResumeKick = true; }
-                            }
-                        }
-                        else if (pinned.HasProgressToMake() && pinned.IsWithinActiveWindow())
-                        {
-                            // Pin drift: the pinned campaign has watch time to earn (e.g. after a desync correction)
-                            // but something else is being mined on its platform — return to the pin.
-                            string? currentId = platform == Platform.Twitch ? _currentTwitchCampaign?.Id : _currentKickCampaign?.Id;
-                            if (!string.Equals(currentId, pinned.Id, StringComparison.Ordinal))
-                            {
-                                AppLogger.Info("Selection", $"Pinned campaign '{pinned.Name}' has progress to make but isn't being mined — returning to it.");
-                                if (platform == Platform.Twitch) pinResumeTwitch = true; else pinResumeKick = true;
-                            }
+                            DropsCampaign? pinned = ActiveCampaigns.FirstOrDefault(c => c.Id == pinId);
+                            if (pinned == null || !pinned.HasProgressToMake() || !pinned.IsWithinActiveWindow())
+                                continue;
+
+                            // While suspended, only re-probe on the throttle; otherwise (pin drifted away) go back now.
+                            bool suspended = IsPinSuspended(platform);
+                            if (suspended && !pinCheckDue)
+                                break;
+                            if (suspended && !await PinnedCampaignHasLiveChannelAsync(pinned))
+                                continue;
+
+                            AppLogger.Info("Selection", suspended
+                                ? $"Pinned campaign '{pinned.Name}' has a live streamer again — returning to it."
+                                : $"Pinned campaign '{pinned.Name}' has progress to make but isn't being mined — returning to it.");
+                            if (platform == Platform.Twitch) { _twitchPinSuspended = false; pinResumeTwitch = true; }
+                            else { _kickPinSuspended = false; pinResumeKick = true; }
+                            break;
                         }
                     }
 
