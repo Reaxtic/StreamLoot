@@ -3,6 +3,24 @@
 All notable changes to **Stream Loot** are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.1.2] — 2026-07-17
+
+Two Kick fixes that together stopped it from crediting at all.
+
+### Fixed
+- **Kick stopped crediting due to a re-selection loop** — the health check judged
+  channel-bound campaigns (Football Drop, Stake, …) by stream *category*, which
+  those campaigns don't require and the selection path rightly ignores. It kept
+  declaring a perfectly good stream "wrong category" and forced a full
+  re-selection every 30 seconds, re-navigating the player so watch time never
+  accumulated.
+- **A pin with an offline streamer blocked the pins behind it** — only the
+  queue-front pin per platform was considered, so an offline pin at #1 kept a
+  LIVE pin at #3 from being mined and the app fell back to automatic picks
+  instead of your choice. Selection now walks the queue and mines the first pin
+  that actually has a live channel; pins are only suspended when *no* pinned
+  campaign has a live streamer.
+
 ## [1.1.1] — 2026-07-15
 
 Stability release: the app now survives sleep, network drops and wedged UI
@@ -191,6 +209,7 @@ Rebrand of "Stream Drop Collector" → **Stream Loot** (MIT fork; original autho
   [TwitchDropsMiner by DevilXD](https://github.com/DevilXD/TwitchDropsMiner) (MIT).
   No source code was copied; both projects are MIT-licensed.
 
+[1.1.2]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.1.2
 [1.1.1]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.1.1
 [1.1.0]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.1.0
 [1.0.3]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.0.3

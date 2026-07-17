@@ -1,8 +1,13 @@
 {
-  "version": "1.1.1",
+  "version": "1.1.2",
   "type": "Patch",
-  "changelog": "Stability: hard-restart watchdog recovers a wedged app on its own, sleep/resume aware engine (no more frozen-after-sleep), finish-line priority so a drop is never abandoned at 99%, per-platform pins mined simultaneously, and pins that survive fetch hiccups.",
+  "changelog": "Kick fixes: stopped a 30-second re-selection loop that re-navigated the player and prevented Kick from crediting at all, and a pinned campaign with offline streamers no longer blocks the live pins behind it.",
   "historic_versions": [
+    {
+      "version": "1.1.1",
+      "type": "Patch",
+      "changelog": "Stability: hard-restart watchdog recovers a wedged app on its own, sleep/resume aware engine (no more frozen-after-sleep), finish-line priority so a drop is never abandoned at 99%, per-platform pins mined simultaneously, and pins that survive fetch hiccups."
+    },
     {
       "version": "1.1.0",
       "type": "Feature",
