@@ -104,5 +104,15 @@ namespace UI.Views
         {
             UISettingsManager.Instance.ClearGameWhitelist(Platform.Kick);
         }
+
+        private void OnClearTwitchBlacklistClick(object sender, RoutedEventArgs e)
+        {
+            UISettingsManager.Instance.ClearGameBlacklist(Platform.Twitch);
+        }
+
+        private void OnClearKickBlacklistClick(object sender, RoutedEventArgs e)
+        {
+            UISettingsManager.Instance.ClearGameBlacklist(Platform.Kick);
+        }
     }
 }

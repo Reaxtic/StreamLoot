@@ -22,6 +22,9 @@ namespace Core.Models
         // When true, the selected games are EXCLUDED (mine everything else) instead of being an allow-list.
         public bool TwitchGameFilterExclude { get; set; }
         public bool KickGameFilterExclude { get; set; }
+        // Per-game block-list: these games are NEVER mined, regardless of the allow-list above.
+        public List<string> TwitchGameBlacklistSlugs { get; set; } = new List<string>();
+        public List<string> KickGameBlacklistSlugs { get; set; } = new List<string>();
         // Run WebView2 without GPU acceleration (for machines with unstable graphics drivers).
         public bool SoftwareRendering { get; set; }
         // Put the computer to sleep once every campaign is fully mined and claimed.

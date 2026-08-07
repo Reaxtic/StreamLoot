@@ -13,6 +13,7 @@ namespace Core.Models
     public sealed class GameFilterOption : INotifyPropertyChanged
     {
         private bool _isSelected;
+        private bool _isExcluded;
 
         /// <summary>
         /// Occurs when a property value changes.
@@ -48,7 +49,35 @@ namespace Core.Models
                     return;
 
                 _isSelected = value;
+                if (value && _isExcluded)
+                {
+                    // "Mine this" and "Exclude" are mutually exclusive per game.
+                    _isExcluded = false;
+                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsExcluded)));
+                }
                 PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+            }
+        }
+        /// <summary>
+        /// Gets or sets whether this game is explicitly EXCLUDED from mining. Independent of <see cref="IsSelected"/>
+        /// and always wins: an excluded game is never mined, even if it is also on the allow-list. This is the
+        /// per-game "block this game" switch, as opposed to the old all-or-nothing exclude mode.
+        /// </summary>
+        public bool IsExcluded
+        {
+            get => _isExcluded;
+            set
+            {
+                if (_isExcluded == value)
+                    return;
+
+                _isExcluded = value;
+                if (value && _isSelected)
+                {
+                    _isSelected = false;
+                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+                }
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsExcluded)));
             }
         }
         /// <summary>
@@ -59,12 +88,13 @@ namespace Core.Models
         /// <param name="slug">The unique identifier used to reference this filter option.</param>
         /// <param name="displayName">The display name shown to users for this filter option.</param>
         /// <param name="isSelected">A value indicating whether this filter option is initially selected.</param>
-        public GameFilterOption(Platform platform, string slug, string displayName, bool isSelected)
+        public GameFilterOption(Platform platform, string slug, string displayName, bool isSelected, bool isExcluded = false)
         {
             Platform = platform;
             Slug = slug;
             DisplayName = displayName;
             _isSelected = isSelected;
+            _isExcluded = isExcluded;
         }
     }
 }

@@ -381,13 +381,28 @@
                             <ListBox ItemsSource="{Binding TwitchGameFilterOptions}"
                                      BorderThickness="0"
                                      Background="Transparent"
-                                     MaxHeight="140">
+                                     HorizontalContentAlignment="Stretch"
+                                     MaxHeight="180">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
-                                        <CheckBox Content="{Binding DisplayName}"
-                                                  IsChecked="{Binding IsSelected, Mode=TwoWay}"
-                                                  Style="{StaticResource ModernCheckBoxStyle}"
-                                                  Margin="0,4,0,4"/>
+                                        <Grid Margin="0,4,0,4">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <CheckBox Grid.Column="0"
+                                                      Content="{Binding DisplayName}"
+                                                      IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                                      Style="{StaticResource ModernCheckBoxStyle}"
+                                                      ToolTip="Mine this game (allow-list)"/>
+                                            <CheckBox Grid.Column="1"
+                                                      Content="🚫 Wyklucz"
+                                                      IsChecked="{Binding IsExcluded, Mode=TwoWay}"
+                                                      Style="{StaticResource ModernCheckBoxStyle}"
+                                                      Foreground="#F87171"
+                                                      Margin="12,0,4,0"
+                                                      ToolTip="Never mine this game — overrides everything else"/>
+                                        </Grid>
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
@@ -396,11 +411,15 @@
                                   IsChecked="{Binding TwitchGameFilterExclude, Mode=TwoWay}"
                                   Style="{StaticResource ModernCheckBoxStyle}"
                                   Margin="0,0,0,8"/>
-                        <Button Content="Clear Twitch whitelist"
-                                Style="{StaticResource AccentButtonStyle}"
-                                HorizontalAlignment="Left"
-                                Click="OnClearTwitchWhitelistClick"
-                                Margin="0,0,0,12"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                            <Button Content="Clear Twitch whitelist"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    Click="OnClearTwitchWhitelistClick"
+                                    Margin="0,0,8,0"/>
+                            <Button Content="Clear Twitch exclusions"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    Click="OnClearTwitchBlacklistClick"/>
+                        </StackPanel>
 
                         <TextBlock Text="Kick" Foreground="{DynamicResource TextPrimaryBrush}" FontWeight="SemiBold" Margin="0,0,0,6"/>
                         <TextBlock Text="{Binding KickWhitelistSummary}" Foreground="{DynamicResource TextMutedBrush}" Margin="0,0,0,8"/>
@@ -413,13 +432,28 @@
                             <ListBox ItemsSource="{Binding KickGameFilterOptions}"
                                      BorderThickness="0"
                                      Background="Transparent"
-                                     MaxHeight="140">
+                                     HorizontalContentAlignment="Stretch"
+                                     MaxHeight="180">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
-                                        <CheckBox Content="{Binding DisplayName}"
-                                                  IsChecked="{Binding IsSelected, Mode=TwoWay}"
-                                                  Style="{StaticResource ModernCheckBoxStyle}"
-                                                  Margin="0,4,0,4"/>
+                                        <Grid Margin="0,4,0,4">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <CheckBox Grid.Column="0"
+                                                      Content="{Binding DisplayName}"
+                                                      IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                                      Style="{StaticResource ModernCheckBoxStyle}"
+                                                      ToolTip="Mine this game (allow-list)"/>
+                                            <CheckBox Grid.Column="1"
+                                                      Content="🚫 Wyklucz"
+                                                      IsChecked="{Binding IsExcluded, Mode=TwoWay}"
+                                                      Style="{StaticResource ModernCheckBoxStyle}"
+                                                      Foreground="#F87171"
+                                                      Margin="12,0,4,0"
+                                                      ToolTip="Never mine this game — overrides everything else"/>
+                                        </Grid>
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
@@ -428,10 +462,15 @@
                                   IsChecked="{Binding KickGameFilterExclude, Mode=TwoWay}"
                                   Style="{StaticResource ModernCheckBoxStyle}"
                                   Margin="0,0,0,8"/>
-                        <Button Content="Clear Kick whitelist"
-                                Style="{StaticResource AccentButtonStyle}"
-                                HorizontalAlignment="Left"
-                                Click="OnClearKickWhitelistClick"/>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="Clear Kick whitelist"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    Click="OnClearKickWhitelistClick"
+                                    Margin="0,0,8,0"/>
+                            <Button Content="Clear Kick exclusions"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    Click="OnClearKickBlacklistClick"/>
+                        </StackPanel>
                     </StackPanel>
                 </Border>
 
