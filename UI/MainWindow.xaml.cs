@@ -1,4 +1,4 @@
-using UserControl = System.Windows.Controls.UserControl;
+﻿using UserControl = System.Windows.Controls.UserControl;
 using Button = System.Windows.Controls.Button;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -367,7 +367,7 @@ namespace UI
             SetWindowLong(hwnd, GWL_EXSTYLE, extendedStyle | WS_EX_TOOLWINDOW);
 
             NotificationManager.ShowNotification("Stream Loot", "Minimized to tray - drops still farming!");
-            MinimizeAndRestore.Header = "Restore";
+            MinimizeAndRestore.Header = Core.Managers.Loc.Instance["Tray.Restore"];
             MyNotifyIcon.ToolTipText = "Stream Loot - Farming in background";
         }
         /// <summary>
@@ -400,7 +400,7 @@ namespace UI
             Topmost = true;
             Topmost = false;
 
-            MinimizeAndRestore.Header = "Minimize";
+            MinimizeAndRestore.Header = Core.Managers.Loc.Instance["Win.Minimize"];
             MyNotifyIcon.ToolTipText = "Stream Loot by Reaxtic";
         }
         /// <summary>
@@ -427,7 +427,7 @@ namespace UI
                 int extendedStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
                 SetWindowLong(hwnd, GWL_EXSTYLE, extendedStyle & ~WS_EX_TOOLWINDOW);
 
-                MinimizeAndRestore.Header = "Minimize";
+                MinimizeAndRestore.Header = Core.Managers.Loc.Instance["Win.Minimize"];
                 MyNotifyIcon.ToolTipText = "Stream Loot by Reaxtic";
             }
 

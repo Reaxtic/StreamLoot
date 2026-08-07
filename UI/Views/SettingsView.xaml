@@ -1,6 +1,7 @@
-<UserControl x:Class="UI.Views.SettingsView"
+﻿<UserControl x:Class="UI.Views.SettingsView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:loc="clr-namespace:UI.Helpers"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:enums="clr-namespace:Core.Enums;assembly=Core"
@@ -226,7 +227,7 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <TextBlock Text="Settings"
+        <TextBlock Text="{loc:T Set.Title}"
                    FontSize="30"
                    FontWeight="Bold"
                    Foreground="{DynamicResource TextPrimaryBrush}"
@@ -240,16 +241,16 @@
                         CornerRadius="16" Padding="24" Margin="0,0,0,24"
                         BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
                     <StackPanel>
-                        <TextBlock Text="General" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12"/>
+                        <TextBlock Text="{loc:T Set.General}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12"/>
                         <CheckBox IsChecked="{Binding StartWithWindows, Mode=TwoWay}"
                                   Style="{StaticResource ModernCheckBoxStyle}"
-                                  Content="Start with Windows"
+                                  Content="{loc:T Set.StartWithWindows}"
                                   Margin="0,0,0,12"/>
 
                         <CheckBox IsChecked="{Binding MinimizeToTrayOnStartup, Mode=TwoWay}"
                                   IsEnabled="{Binding StartWithWindows}"
                                   Style="{StaticResource ModernCheckBoxStyle}"
-                                  Content="Minimize to system tray on startup"/>
+                                  Content="{loc:T Set.MinimizeToTray}"/>
                     </StackPanel>
                 </Border>
 
@@ -259,19 +260,19 @@
                         BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
 
                     <StackPanel>
-                        <TextBlock Text="Appearance" Foreground="{DynamicResource TextSecondaryBrush}"
+                        <TextBlock Text="{loc:T Set.Appearance}" Foreground="{DynamicResource TextSecondaryBrush}"
                                    FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12"/>
 
                         <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                            <TextBlock Text="Theme" Foreground="{DynamicResource TextMutedBrush}"
+                            <TextBlock Text="{loc:T Set.Theme}" Foreground="{DynamicResource TextMutedBrush}"
                                        Width="140" VerticalAlignment="Center"/>
                             <ComboBox Width="200"
                                       Style="{StaticResource NeonFlatComboBoxStyle}"
                                       SelectedValue="{Binding Theme, Mode=TwoWay}"
                                       SelectedValuePath="Content">
-                                <ComboBoxItem Content="Dark"/>
-                                <ComboBoxItem Content="Light"/>
-                                <ComboBoxItem Content="System"/>
+                                <ComboBoxItem Content="{loc:T Set.ThemeDark}"/>
+                                <ComboBoxItem Content="{loc:T Set.ThemeLight}"/>
+                                <ComboBoxItem Content="{loc:T Set.ThemeSystem}"/>
                             </ComboBox>
                         </StackPanel>
                     </StackPanel>
@@ -286,7 +287,7 @@
                     BorderThickness="1">
                     <StackPanel>
                         <!-- Header -->
-                        <TextBlock Text="Updates"
+                        <TextBlock Text="{loc:T Set.Updates}"
                            Foreground="{DynamicResource TextSecondaryBrush}"
                            FontSize="18"
                            FontWeight="SemiBold"
@@ -294,7 +295,7 @@
 
                         <!-- Frequency -->
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
-                            <TextBlock Text="Check for updates automatically"
+                            <TextBlock Text="{loc:T Set.CheckUpdates}"
                                Foreground="{DynamicResource TextMutedBrush}"
                                VerticalAlignment="Center"
                                Margin="0,0,20,0"/>
@@ -304,15 +305,15 @@
                                  SelectedValue="{Binding UpdateFrequency, Mode=TwoWay}"
                                  SelectedValuePath="Tag">
                                 
-                                <ComboBoxItem Content="Every time the app starts" Tag="{x:Static enums:UpdateFrequency.OnLaunch}"/>
-                                <ComboBoxItem Content="Daily" Tag="{x:Static enums:UpdateFrequency.Daily}"/>
-                                <ComboBoxItem Content="Weekly" Tag="{x:Static enums:UpdateFrequency.Weekly}"/>
-                                <ComboBoxItem Content="Never" Tag="{x:Static enums:UpdateFrequency.Never}"/>
+                                <ComboBoxItem Content="{loc:T Set.UpdOnLaunch}" Tag="{x:Static enums:UpdateFrequency.OnLaunch}"/>
+                                <ComboBoxItem Content="{loc:T Set.UpdDaily}" Tag="{x:Static enums:UpdateFrequency.Daily}"/>
+                                <ComboBoxItem Content="{loc:T Set.UpdWeekly}" Tag="{x:Static enums:UpdateFrequency.Weekly}"/>
+                                <ComboBoxItem Content="{loc:T Set.UpdNever}" Tag="{x:Static enums:UpdateFrequency.Never}"/>
                             </ComboBox>
                         </StackPanel>
 
                         <!-- Status text - hidden when no update -->
-                        <TextBlock Text="A new update is available, update now to experience the newest features!"
+                        <TextBlock Text="{loc:T Set.UpdateAvailable}"
                            Foreground="{DynamicResource TextMutedBrush}"
                            FontSize="12"
                            Visibility="{Binding UpdateAvailable, Converter={StaticResource BooleanToVisibilityConverter}}"/>
@@ -321,7 +322,7 @@
                         <Button Height="44"
                             MinWidth="240"
                             Style="{StaticResource AccentButtonStyle}"
-                            Content="Update Now"
+                            Content="{loc:T Set.UpdateNow}"
                             Foreground="Black"
                             FontWeight="Bold"
                             FontSize="13"
@@ -336,25 +337,25 @@
                         CornerRadius="16" Padding="24" Margin="0,0,0,24"
                         BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
                     <StackPanel>
-                        <TextBlock Text="Drops Behavior" Foreground="{DynamicResource TextSecondaryBrush}"
+                        <TextBlock Text="{loc:T Set.DropsBehavior}" Foreground="{DynamicResource TextSecondaryBrush}"
                                    FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12"/>
 
                         <CheckBox IsChecked="{Binding AutoClaimRewards, Mode=TwoWay}"
                                   Style="{StaticResource ModernCheckBoxStyle}"
-                                  Content="Auto-claim rewards when ready"
+                                  Content="{loc:T Set.AutoClaim}"
                                   Margin="0,0,0,12"/>
 
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,0">
-                            <TextBlock Text="Mining priority" Foreground="{DynamicResource TextMutedBrush}"
+                            <TextBlock Text="{loc:T Set.MiningPriority}" Foreground="{DynamicResource TextMutedBrush}"
                                        Width="140" VerticalAlignment="Center"/>
                             <ComboBox Width="260"
                                       Style="{StaticResource NeonFlatComboBoxStyle}"
                                       SelectedValue="{Binding MiningPriorityMode, Mode=TwoWay}"
                                       SelectedValuePath="Tag">
-                                <ComboBoxItem Content="Availability + Progress" Tag="{x:Static enums:MiningPriorityMode.AvailabilityThenProgress}"/>
-                                <ComboBoxItem Content="Ending Soonest" Tag="{x:Static enums:MiningPriorityMode.EndingSoonest}"/>
-                                <ComboBoxItem Content="Least Time To Next Reward" Tag="{x:Static enums:MiningPriorityMode.LeastTimeToNextReward}"/>
-                                <ComboBoxItem Content="Highest Completion" Tag="{x:Static enums:MiningPriorityMode.HighestCompletion}"/>
+                                <ComboBoxItem Content="{loc:T Set.PrioAvailability}" Tag="{x:Static enums:MiningPriorityMode.AvailabilityThenProgress}"/>
+                                <ComboBoxItem Content="{loc:T Set.PrioEnding}" Tag="{x:Static enums:MiningPriorityMode.EndingSoonest}"/>
+                                <ComboBoxItem Content="{loc:T Set.PrioLeastTime}" Tag="{x:Static enums:MiningPriorityMode.LeastTimeToNextReward}"/>
+                                <ComboBoxItem Content="{loc:T Set.PrioHighest}" Tag="{x:Static enums:MiningPriorityMode.HighestCompletion}"/>
                             </ComboBox>
                         </StackPanel>
                     </StackPanel>
@@ -365,9 +366,9 @@
                         CornerRadius="16" Padding="24" Margin="0,0,0,24"
                         BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
                     <StackPanel>
-                        <TextBlock Text="Game Filtering" Foreground="{DynamicResource TextSecondaryBrush}"
+                        <TextBlock Text="{loc:T Set.GameFiltering}" Foreground="{DynamicResource TextSecondaryBrush}"
                                    FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8"/>
-                        <TextBlock Text="If no games are selected, all games are allowed."
+                        <TextBlock Text="{loc:T Set.GameFilteringHint}"
                                    Foreground="{DynamicResource TextMutedBrush}" Margin="0,0,0,12"/>
 
                         <TextBlock Text="Twitch" Foreground="{DynamicResource TextPrimaryBrush}" FontWeight="SemiBold" Margin="0,0,0,6"/>
@@ -394,29 +395,29 @@
                                                       Content="{Binding DisplayName}"
                                                       IsChecked="{Binding IsSelected, Mode=TwoWay}"
                                                       Style="{StaticResource ModernCheckBoxStyle}"
-                                                      ToolTip="Mine this game (allow-list)"/>
+                                                      ToolTip="{loc:T Set.AllowTip}"/>
                                             <CheckBox Grid.Column="1"
-                                                      Content="🚫 Wyklucz"
+                                                      Content="{loc:T Set.Exclude}"
                                                       IsChecked="{Binding IsExcluded, Mode=TwoWay}"
                                                       Style="{StaticResource ModernCheckBoxStyle}"
                                                       Foreground="#F87171"
                                                       Margin="12,0,4,0"
-                                                      ToolTip="Never mine this game — overrides everything else"/>
+                                                      ToolTip="{loc:T Set.ExcludeTip}"/>
                                         </Grid>
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
                         </Border>
-                        <CheckBox Content="Exclude selected games (mine everything except these)"
+                        <CheckBox Content="{loc:T Set.ExcludeMode}"
                                   IsChecked="{Binding TwitchGameFilterExclude, Mode=TwoWay}"
                                   Style="{StaticResource ModernCheckBoxStyle}"
                                   Margin="0,0,0,8"/>
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                            <Button Content="Clear Twitch whitelist"
+                            <Button Content="{loc:T Set.ClearTwitchWhitelist}"
                                     Style="{StaticResource AccentButtonStyle}"
                                     Click="OnClearTwitchWhitelistClick"
                                     Margin="0,0,8,0"/>
-                            <Button Content="Clear Twitch exclusions"
+                            <Button Content="{loc:T Set.ClearTwitchExclusions}"
                                     Style="{StaticResource AccentButtonStyle}"
                                     Click="OnClearTwitchBlacklistClick"/>
                         </StackPanel>
@@ -445,29 +446,29 @@
                                                       Content="{Binding DisplayName}"
                                                       IsChecked="{Binding IsSelected, Mode=TwoWay}"
                                                       Style="{StaticResource ModernCheckBoxStyle}"
-                                                      ToolTip="Mine this game (allow-list)"/>
+                                                      ToolTip="{loc:T Set.AllowTip}"/>
                                             <CheckBox Grid.Column="1"
-                                                      Content="🚫 Wyklucz"
+                                                      Content="{loc:T Set.Exclude}"
                                                       IsChecked="{Binding IsExcluded, Mode=TwoWay}"
                                                       Style="{StaticResource ModernCheckBoxStyle}"
                                                       Foreground="#F87171"
                                                       Margin="12,0,4,0"
-                                                      ToolTip="Never mine this game — overrides everything else"/>
+                                                      ToolTip="{loc:T Set.ExcludeTip}"/>
                                         </Grid>
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
                         </Border>
-                        <CheckBox Content="Exclude selected games (mine everything except these)"
+                        <CheckBox Content="{loc:T Set.ExcludeMode}"
                                   IsChecked="{Binding KickGameFilterExclude, Mode=TwoWay}"
                                   Style="{StaticResource ModernCheckBoxStyle}"
                                   Margin="0,0,0,8"/>
                         <StackPanel Orientation="Horizontal">
-                            <Button Content="Clear Kick whitelist"
+                            <Button Content="{loc:T Set.ClearKickWhitelist}"
                                     Style="{StaticResource AccentButtonStyle}"
                                     Click="OnClearKickWhitelistClick"
                                     Margin="0,0,8,0"/>
-                            <Button Content="Clear Kick exclusions"
+                            <Button Content="{loc:T Set.ClearKickExclusions}"
                                     Style="{StaticResource AccentButtonStyle}"
                                     Click="OnClearKickBlacklistClick"/>
                         </StackPanel>
@@ -479,24 +480,24 @@
                         CornerRadius="16" Padding="24" Margin="0,0,0,24"
                         BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
                     <StackPanel>
-                        <TextBlock Text="Notifications" Foreground="{DynamicResource TextSecondaryBrush}"
+                        <TextBlock Text="{loc:T Set.Notifications}" Foreground="{DynamicResource TextSecondaryBrush}"
                                    FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12"/>
 
                         <CheckBox IsChecked="{Binding NotifyOnReadyToClaim, Mode=TwoWay}"
                                   Style="{StaticResource ModernCheckBoxStyle}"
-                                  Content="Drop ready to claim (only if auto-claim is off)"
+                                  Content="{loc:T Set.NotifyReady}"
                                   Margin="0,0,0,12"
                                   IsEnabled="{Binding AutoClaimRewards, Converter={StaticResource InverseBooleanConverter}}"/>
 
                         <CheckBox IsChecked="{Binding NotifyOnAutoClaimed, Mode=TwoWay}"
                                   Style="{StaticResource ModernCheckBoxStyle}"
-                                  Content="Drop successfully auto-claimed (only if auto-claim is on)"
+                                  Content="{loc:T Set.NotifyClaimed}"
                                   Margin="0,0,0,12"
                                   IsEnabled="{Binding AutoClaimRewards}"/>
 
                         <CheckBox IsChecked="{Binding NotifyOnNewUpdateAvailable, Mode=TwoWay}"
                                   Style="{StaticResource ModernCheckBoxStyle}"
-                                  Content="New update is available"
+                                  Content="{loc:T Set.NotifyUpdate}"
                                   Margin="0,0,0,12"
                                   IsEnabled="{Binding IsUpdateNotificationEnabled}"/>
                     </StackPanel>
@@ -507,21 +508,21 @@
                         CornerRadius="16" Padding="24" Margin="0,0,0,24"
                         BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
                     <StackPanel>
-                        <TextBlock Text="Advanced" Foreground="{DynamicResource TextSecondaryBrush}"
+                        <TextBlock Text="{loc:T Set.Advanced}" Foreground="{DynamicResource TextSecondaryBrush}"
                                    FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12"/>
 
                         <CheckBox IsChecked="{Binding SoftwareRendering, Mode=TwoWay}"
                                   Style="{StaticResource ModernCheckBoxStyle}"
-                                  Content="Software rendering (no GPU) — for unstable graphics drivers; takes effect after restart"
+                                  Content="{loc:T Set.SoftwareRendering}"
                                   Margin="0,0,0,12"/>
 
                         <CheckBox IsChecked="{Binding SleepWhenDone, Mode=TwoWay}"
                                   Style="{StaticResource ModernCheckBoxStyle}"
-                                  Content="Put the computer to sleep when everything is mined and claimed"
+                                  Content="{loc:T Set.SleepWhenDone}"
                                   Margin="0,0,0,12"/>
 
                         <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                            <TextBlock Text="Language / Język:" Foreground="{DynamicResource TextSecondaryBrush}"
+                            <TextBlock Text="{loc:T Set.Language}" Foreground="{DynamicResource TextSecondaryBrush}"
                                        FontSize="13" VerticalAlignment="Center" Margin="0,0,12,0"/>
                             <ComboBox x:Name="LanguageCombo" Width="140" SelectionChanged="OnLanguageChanged">
                                 <ComboBoxItem Content="English" Tag="en"/>
@@ -536,10 +537,10 @@
                         CornerRadius="16" Padding="24" Margin="0,0,0,24"
                         BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
                     <StackPanel>
-                        <TextBlock Text="Logs"
+                        <TextBlock Text="{loc:T Set.Logs}"
                                    Foreground="{DynamicResource TextSecondaryBrush}"
                                    FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8"/>
-                        <TextBlock Text="Open the folder containing diagnostic logs for support tickets."
+                        <TextBlock Text="{loc:T Set.LogsHint}"
                                    Foreground="{DynamicResource TextMutedBrush}"
                                    FontSize="13" Margin="0,0,0,12"/>
 
@@ -552,9 +553,9 @@
                             <StackPanel>
                                 <CheckBox IsChecked="{Binding VerboseDebugLogging, Mode=TwoWay}"
                                           Style="{StaticResource ModernCheckBoxStyle}"
-                                          Content="Verbose debug logging"
+                                          Content="{loc:T Set.VerboseLogging}"
                                           Margin="0,0,0,6"/>
-                                <TextBlock Text="Adds detailed miner + reward percentage trace logs. Enable only while troubleshooting."
+                                <TextBlock Text="{loc:T Set.VerboseHint}"
                                            Foreground="{DynamicResource TextMutedBrush}"
                                            FontSize="12"
                                            TextWrapping="Wrap"
@@ -562,7 +563,7 @@
                             </StackPanel>
                         </Border>
 
-                        <Button Content="Open Logs Folder"
+                        <Button Content="{loc:T Set.OpenLogs}"
                                 Style="{StaticResource AccentButtonStyle}"
                                 HorizontalAlignment="Left"
                                 Click="OnOpenLogsFolderClick"/>
@@ -574,14 +575,14 @@
                         CornerRadius="16" Padding="24" Margin="0,0,0,24"
                         BorderBrush="#FF5555" BorderThickness="2">
                     <StackPanel>
-                        <TextBlock Text="Accounts"
+                        <TextBlock Text="{loc:T Set.Accounts}"
                                    Foreground="{DynamicResource TextSecondaryBrush}"
                                    FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12"/>
-                        <TextBlock Text="DANGER ZONE"
+                        <TextBlock Text="{loc:T Set.DangerZone}"
                                    Foreground="#FF5555" FontSize="16" FontWeight="Bold" Margin="0,8,0,4"/>
-                        <TextBlock Text="Permanently delete ALL logged-in accounts from this device"
+                        <TextBlock Text="{loc:T Set.RemoveHint}"
                                    Foreground="#FFAAAA" FontSize="13" TextWrapping="Wrap" Margin="0,0,0,12"/>
-                        <Button Content="Remove ALL Accounts"
+                        <Button Content="{loc:T Set.RemoveAll}"
                                 Background="#B33A3A"
                                 Foreground="White"
                                 FontWeight="SemiBold"
@@ -610,10 +611,10 @@
                         CornerRadius="16" Padding="24" Opacity="0.5"
                         BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
                     <StackPanel>
-                        <TextBlock Text="Your ideas could be here! (coming soon)"
+                        <TextBlock Text="{loc:T Set.IdeasHere}"
                                    Foreground="{DynamicResource TextMutedBrush}"
                                    FontSize="16" FontStyle="Italic" Margin="0,0,0,8"/>
-                        <TextBlock Text="Drop your suggestions, to have them implemented here"
+                        <TextBlock Text="{loc:T Set.IdeasHint}"
                                    Foreground="{DynamicResource TextMutedBrush}"
                                    FontSize="13"/>
                     </StackPanel>

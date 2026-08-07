@@ -1,6 +1,7 @@
-<UserControl x:Class="UI.Views.InventoryView"
+﻿<UserControl x:Class="UI.Views.InventoryView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:loc="clr-namespace:UI.Helpers"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:sys="clr-namespace:System;assembly=mscorlib"
@@ -17,34 +18,34 @@
 
         <!-- HEADER -->
         <Grid Margin="0,0,0,20">
-            <TextBlock Text="Inventory"
+            <TextBlock Text="{loc:T Inv.Title}"
                    FontSize="30"
                    FontWeight="Bold"
                    HorizontalAlignment="Left"
                    Foreground="{DynamicResource TextPrimaryBrush}"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                <CheckBox x:Name="HideClaimedToggle" Content="Hide claimed"
+                <CheckBox x:Name="HideClaimedToggle" Content="{loc:T Inv.HideClaimed}"
                           VerticalAlignment="Center" Margin="0,0,12,0"
                           Foreground="{DynamicResource TextSecondaryBrush}"
                           Checked="OnHideClaimedChanged" Unchecked="OnHideClaimedChanged"
-                          ToolTip="Hide campaigns whose drops are all already claimed"/>
-                <CheckBox x:Name="OnlyAvailableToggle" Content="Show only available"
+                          ToolTip="{loc:T Inv.HideClaimedTip}"/>
+                <CheckBox x:Name="OnlyAvailableToggle" Content="{loc:T Inv.ShowOnlyAvailable}"
                           VerticalAlignment="Center" Margin="0,0,12,0"
                           Foreground="{DynamicResource TextSecondaryBrush}"
                           Checked="OnOnlyAvailableChanged" Unchecked="OnOnlyAvailableChanged"
-                          ToolTip="Hide campaigns whose listed channels are all offline right now"/>
+                          ToolTip="{loc:T Inv.ShowOnlyAvailableTip}"/>
                 <Button Content="⟳"
                         VerticalAlignment="Center"
                         Padding="10,6" Margin="0,0,12,0"
                         Click="OnRefreshAvailabilityClick"
                         Style="{StaticResource AccentButtonStyle}"
-                        ToolTip="Re-check which campaigns have live streamers"/>
-                <Button Content="Auto (mine by priority)"
+                        ToolTip="{loc:T Inv.RefreshTip}"/>
+                <Button Content="{loc:T Inv.AutoMine}"
                         VerticalAlignment="Center"
                         Padding="12,6"
                         Click="OnAutoMineClick"
                         Style="{StaticResource AccentButtonStyle}"
-                        ToolTip="Clear any pinned campaign and select automatically"/>
+                        ToolTip="{loc:T Inv.AutoMineTip}"/>
             </StackPanel>
         </Grid>
 
@@ -130,11 +131,11 @@
                                                 <Style TargetType="Border">
                                                     <!-- Channel-specific = muted -->
                                                     <Setter Property="Background" Value="#33FFFFFF"/>
-                                                    <Setter Property="ToolTip" Value="Channel-specific: progresses only on the channels listed for this campaign."/>
+                                                    <Setter Property="ToolTip" Value="{loc:T Inv.ChannelSpecificTip}"/>
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding IsGeneralDrop}" Value="True">
                                                             <Setter Property="Background" Value="#3300FFAA"/>
-                                                            <Setter Property="ToolTip" Value="General: progresses on ANY live channel of the game, no matter which one you watch."/>
+                                                            <Setter Property="ToolTip" Value="{loc:T Inv.GeneralTip}"/>
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
@@ -144,10 +145,10 @@
                                                        HorizontalAlignment="Center" VerticalAlignment="Center">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock">
-                                                        <Setter Property="Text" Value="Channel-specific"/>
+                                                        <Setter Property="Text" Value="{loc:T Inv.ChannelSpecific}"/>
                                                         <Style.Triggers>
                                                             <DataTrigger Binding="{Binding IsGeneralDrop}" Value="True">
-                                                                <Setter Property="Text" Value="General"/>
+                                                                <Setter Property="Text" Value="{loc:T Inv.General}"/>
                                                             </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>
@@ -194,16 +195,16 @@
                                                            Foreground="{DynamicResource TextPrimaryBrush}">
                                                     <TextBlock.Style>
                                                         <Style TargetType="TextBlock">
-                                                            <Setter Property="Text" Value="Checking…"/>
+                                                            <Setter Property="Text" Value="{loc:T Inv.Checking}"/>
                                                             <Style.Triggers>
                                                                 <DataTrigger Binding="{Binding Availability}" Value="Available">
-                                                                    <Setter Property="Text" Value="{Binding OnlineChannels, StringFormat='{}{0} streamer(s) online'}"/>
+                                                                    <Setter Property="Text" Value="{Binding OnlineChannels, StringFormat='{}{0} online'}"/>
                                                                 </DataTrigger>
                                                                 <DataTrigger Binding="{Binding Availability}" Value="Unavailable">
-                                                                    <Setter Property="Text" Value="No streamers online"/>
+                                                                    <Setter Property="Text" Value="{loc:T Inv.NoStreamers}"/>
                                                                 </DataTrigger>
                                                                 <DataTrigger Binding="{Binding Availability}" Value="Category">
-                                                                    <Setter Property="Text" Value="Category drop"/>
+                                                                    <Setter Property="Text" Value="{loc:T Inv.CategoryDrop}"/>
                                                                 </DataTrigger>
                                                             </Style.Triggers>
                                                         </Style>
@@ -213,7 +214,7 @@
                                         </Border>
 
                                         <TextBlock Margin="15,0,0,0" Foreground="#FF6666">
-                                            <Run Text="Ends "/>
+                                            <Run Text="{loc:T Inv.Ends}"/>
                                             <Run Text="{Binding EndsAt, StringFormat=MMM dd • HH:mm}"/>
                                         </TextBlock>
 
@@ -222,7 +223,7 @@
                                                    Foreground="{DynamicResource TextSecondaryBrush}"
                                                    FontSize="12"
                                                    VerticalAlignment="Center"
-                                                   ToolTip="Estimated watch time until the next drop unlocks"
+                                                   ToolTip="{loc:T Inv.EtaTip}"
                                                    Text="{Binding EtaText, Mode=OneWay}"/>
 
                                         <!-- Stalled: the campaign is not crediting server-side right now -->
@@ -230,9 +231,9 @@
                                                 CornerRadius="6"
                                                 Padding="8,4"
                                                 Background="#EF4444"
-                                                ToolTip="Watching this campaign is currently NOT earning server progress (e.g. a broken game-account link or a rerun channel). The miner de-prioritises it automatically."
+                                                ToolTip="{loc:T Inv.NotCreditingTip}"
                                                 Visibility="{Binding IsStalled, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                            <TextBlock Text="⚠ NOT CREDITING"
+                                            <TextBlock Text="{loc:T Inv.NotCrediting}"
                                                        FontWeight="Bold"
                                                        FontSize="10"
                                                        Foreground="White"/>
@@ -244,7 +245,7 @@
                                                 Padding="8,4"
                                                 Background="{DynamicResource SecondaryAccentBrush}"
                                                 Visibility="{Binding IsCurrentCampaign, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                            <TextBlock Text="WATCHING"
+                                            <TextBlock Text="{loc:T Inv.Watching}"
                                                        FontWeight="Bold"
                                                        FontSize="10"
                                                        Foreground="{DynamicResource MainBackgroundBrush}"/>
@@ -260,7 +261,7 @@
                                                        FontWeight="Bold"
                                                        FontSize="10"
                                                        Foreground="Black"
-                                                       ToolTip="Position in the pin queue — #1 is mined first, the rest follow automatically."/>
+                                                       ToolTip="{loc:T Inv.PinOrderTip}"/>
                                         </Border>
 
                                         <!-- Ready-to-claim hint: fully watched but unclaimed (usually the game
@@ -269,9 +270,9 @@
                                                 CornerRadius="6"
                                                 Padding="8,4"
                                                 Background="#F59E0B"
-                                                ToolTip="Fully watched but not claimed — link your game account on the drops page, then the reward can be collected."
+                                                ToolTip="{loc:T Inv.ReadyTip}"
                                                 Visibility="{Binding HasClaimableUnclaimed, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                            <TextBlock Text="🔗 READY — connect account to claim"
+                                            <TextBlock Text="{loc:T Inv.ReadyBadge}"
                                                        FontWeight="Bold"
                                                        FontSize="10"
                                                        Foreground="Black"/>
@@ -283,10 +284,10 @@
                                                 Click="OnMineThisClick">
                                             <Button.Style>
                                                 <Style TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
-                                                    <Setter Property="Content" Value="Mine this"/>
+                                                    <Setter Property="Content" Value="{loc:T Inv.MineThis}"/>
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding IsPinned}" Value="True">
-                                                            <Setter Property="Content" Value="Unpin"/>
+                                                            <Setter Property="Content" Value="{loc:T Inv.Unpin}"/>
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
@@ -297,7 +298,7 @@
 
                                 <!-- Rewards List -->
                                 <StackPanel Grid.Column="2" VerticalAlignment="Top" MinWidth="320">
-                                    <TextBlock Text="Rewards"
+                                    <TextBlock Text="{loc:T Inv.Rewards}"
                                                FontSize="14"
                                                Foreground="{DynamicResource TextSecondaryBrush}"
                                                Margin="0,0,0,8"/>
@@ -372,7 +373,7 @@
                                                                 Padding="8,4"
                                                                 Margin="10,0,0,0"
                                                                 Visibility="{Binding IsClaimed, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                            <TextBlock Text="CLAIMED"
+                                                            <TextBlock Text="{loc:T Inv.Claimed}"
                                                                        FontWeight="Bold"
                                                                        FontSize="10"
                                                                        Foreground="{DynamicResource MainBackgroundBrush}"/>
@@ -384,7 +385,7 @@
                                                                 Padding="8,4"
                                                                 Margin="10,0,0,0"
                                                                 Visibility="{Binding IsCurrentReward, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                            <TextBlock Text="WATCHING"
+                                                            <TextBlock Text="{loc:T Inv.Watching}"
                                                                        FontWeight="Bold"
                                                                        FontSize="10"
                                                                        Foreground="{DynamicResource MainBackgroundBrush}"/>
@@ -415,7 +416,7 @@
                                 <Setter Property="Template">
                                     <Setter.Value>
                                         <ControlTemplate>
-                                            <TextBlock Text="No active drops campaigns"
+                                            <TextBlock Text="{loc:T Inv.NoCampaigns}"
                                                        FontSize="26"
                                                        Foreground="{DynamicResource TextMutedBrush}"
                                                        HorizontalAlignment="Center"

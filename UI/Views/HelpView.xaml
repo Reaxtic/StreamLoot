@@ -1,6 +1,7 @@
-<UserControl x:Class="UI.Views.HelpView"
+﻿<UserControl x:Class="UI.Views.HelpView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:loc="clr-namespace:UI.Helpers"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              mc:Ignorable="d"
@@ -44,7 +45,7 @@
         </Grid.RowDefinitions>
 
         <!-- TITLE -->
-        <TextBlock Text="Help &amp; Support"
+        <TextBlock Text="{loc:T Help.Title}"
                    FontSize="30"
                    FontWeight="Bold"
                    Foreground="{DynamicResource TextPrimaryBrush}"
@@ -60,13 +61,13 @@
                         CornerRadius="12" Padding="28" Margin="0,0,0,32"
                         BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
                     <StackPanel>
-                        <TextBlock Text="Getting Started" Style="{StaticResource SectionTitle}"/>
+                        <TextBlock Text="{loc:T Help.GettingStarted}" Style="{StaticResource SectionTitle}"/>
                         <TextBlock Style="{StaticResource BodyText}">
-                            <Run Text="1. Log in to your Twitch &amp; Kick accounts to enable drops tracking." 
+                            <Run Text="{loc:T Help.Step1}" 
                                  Foreground="{DynamicResource AccentBrush}"/><LineBreak/>
-                            <Run Text="2. Head to the Dashboard to watch your miner status and campaign progress in real time." 
+                            <Run Text="{loc:T Help.Step2}" 
                                  Foreground="{DynamicResource TextMutedBrush}"/><LineBreak/>
-                            <Run Text="3. Use the sidebar to switch between Inventory, Settings, and this Help page." 
+                            <Run Text="{loc:T Help.Step3}" 
                                  Foreground="{DynamicResource TextMutedBrush}"/>
                         </TextBlock>
                     </StackPanel>
@@ -77,7 +78,7 @@
                         CornerRadius="12" Padding="28" Margin="0,0,0,32"
                         BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
                     <StackPanel>
-                        <TextBlock Text="Inventory Tracking" Style="{StaticResource SectionTitle}"/>
+                        <TextBlock Text="{loc:T Help.InventoryTracking}" Style="{StaticResource SectionTitle}"/>
                         <TextBlock Style="{StaticResource BodyText}">
                             All active campaigns and collected drops are displayed here with live progress per streamer.<LineBreak/>
                             Make sure your accounts are linked - rewards update automatically when claimed.
@@ -90,7 +91,7 @@
                         CornerRadius="12" Padding="28" Margin="0,0,0,32"
                         BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
                     <StackPanel>
-                        <TextBlock Text="Settings" Style="{StaticResource SectionTitle}"/>
+                        <TextBlock Text="{loc:T Help.Settings}" Style="{StaticResource SectionTitle}"/>
                         <TextBlock Style="{StaticResource BodyText}">
                             Customize auto-claim, notifications, theme, and more.<LineBreak/>
                             All changes are saved instantly - no "Apply" button needed.
@@ -103,7 +104,7 @@
                         CornerRadius="12" Padding="28"
                         BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
                     <StackPanel>
-                        <TextBlock Text="Support &amp; Community" Style="{StaticResource SectionTitle}"/>
+                        <TextBlock Text="{loc:T Help.Community}" Style="{StaticResource SectionTitle}"/>
                         <TextBlock FontSize="15" 
                                    Foreground="{DynamicResource TextMutedBrush}" 
                                    Margin="0,0,0,16"
@@ -128,7 +129,7 @@
                 </Border>
 
                 <!-- SIGNATURE -->
-                <TextBlock Text="Made with rage, caffeine, and zero sleep by Reaxtic"
+                <TextBlock Text="{loc:T Help.MadeWith}"
                            Foreground="{DynamicResource TextMutedBrush}"
                            FontSize="14"
                            HorizontalAlignment="Center"
@@ -140,7 +141,7 @@
                         CornerRadius="16" Padding="32" Margin="0,60,0,40"
                         BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
                     <StackPanel HorizontalAlignment="Center">
-                        <TextBlock Text="FUEL THE MACHINE"
+                        <TextBlock Text="{loc:T Help.Fuel}"
                                    FontSize="28"
                                    FontWeight="Bold"
                                    Foreground="{DynamicResource AccentBrush}"
@@ -152,7 +153,7 @@
                             </TextBlock.Effect>
                         </TextBlock>
 
-                        <TextBlock Text="This tool is 100% free. Always will be.&#10;But if youâ€™re farming 24/7 and want to throw some ammo at the dev..."
+                        <TextBlock Text="{loc:T Help.CoffeeText}"
                                    FontSize="15"
                                    Foreground="{DynamicResource TextMutedBrush}"
                                    HorizontalAlignment="Center"
@@ -170,7 +171,7 @@
                                 FontSize="22"
                                 FontWeight="Bold"
                                 Foreground="Black"
-                                Content="BUY ME A COFFEE"
+                                Content="{loc:T Help.Coffee}"
                                 Click="OnBuyMeCoffeeButtonClicked">
                             <Button.Template>
                                 <ControlTemplate TargetType="Button">
@@ -206,7 +207,7 @@
                             </Button.RenderTransform>
                         </Button>
 
-                        <TextBlock Text="Your drops. My war. Letâ€™s keep winning."
+                        <TextBlock Text="{loc:T Help.Closing}"
                                    FontSize="14"
                                    Foreground="{DynamicResource TextMutedBrush}"
                                    FontStyle="Italic"
