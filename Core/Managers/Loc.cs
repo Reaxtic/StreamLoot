@@ -56,6 +56,8 @@ namespace Core.Managers
             ["Status.Mining"] = ("Mining", "Kopanie"),
             ["Status.MiningDetails"] = ("Watching stream(s) to earn drops", "Oglądanie transmisji, aby zdobywać dropy"),
             ["Status.AllDone"] = ("All campaigns mined and claimed!", "Wszystkie kampanie wykopane i odebrane!"),
+            ["Status.IdleNotCrediting"] = ("Nothing to mine", "Nie ma czego kopać"),
+            ["Status.IdleNotCreditingDetails"] = ("The remaining campaigns are not crediting (already claimed, or the game account isn't linked). Retrying within the hour.", "Pozostałe kampanie nie naliczają (już odebrane albo konto gry nie jest połączone). Ponowna próba w ciągu godziny."),
 
             // ---- Dashboard ----
             ["Dash.Campaign"] = ("CAMPAIGN", "KAMPANIA"),

@@ -168,7 +168,11 @@ namespace Core.Services
                 }
 
                 // Return the new list
-                AppLogger.Info("TwitchDrops", $"Active campaigns fetched successfully. count={updatedResult.Count}");
+                // Diagnostic: how many campaigns the server already considers fully collected. A campaign whose
+                // drops are all claimed is filtered out by HasProgressToMake, so if the miner keeps returning to
+                // one, this line shows whether Twitch actually reported it as claimed.
+                int fullyClaimed = updatedResult.Count(c => c.Rewards.Count > 0 && c.Rewards.All(r => r.IsClaimed));
+                AppLogger.Info("TwitchDrops", $"Active campaigns fetched successfully. count={updatedResult.Count}, fullyClaimed={fullyClaimed}, withUnclaimed={updatedResult.Count - fullyClaimed}");
                 return updatedResult.AsReadOnly();
             }
             catch (Exception ex)
@@ -190,6 +194,8 @@ namespace Core.Services
         /// campaign details.</param>
         /// <returns>A DropsCampaign object populated with data parsed from the provided JSON object. The returned object
         /// contains campaign metadata, associated rewards, and relevant channel URLs.</returns>
+        private static bool _loggedDropShape;
+
         private static DropsCampaign? ParseCampaignFromDetails(JsonObject detailedData)
         {
             string id = detailedData["id"]?.GetValue<string>() ?? "";
@@ -238,8 +244,29 @@ namespace Core.Services
                     int requiredMinutes = drop["requiredMinutesWatched"]?.GetValue<int>() ?? 0;
                     int requiredSubs = drop["requiredSubs"]?.GetValue<int>() ?? 0;
 
+                    // Authoritative per-drop state from the campaign details response. Without this the reward
+                    // starts as "unclaimed, 0 minutes" and can only ever be corrected from dropCampaignsInProgress
+                    // — which does NOT list campaigns whose drops are already claimed. That made the miner sit
+                    // forever on campaigns Twitch already considers finished (server progress reported as 0).
                     int currentMinutes = 0;
                     bool isClaimed = false;
+
+                    JsonObject? dropSelf = drop["self"]?.AsObject();
+                    if (dropSelf != null)
+                    {
+                        currentMinutes = dropSelf["currentMinutesWatched"]?.GetValue<int>() ?? 0;
+                        isClaimed = dropSelf["isClaimed"]?.GetValue<bool>() ?? false;
+                    }
+
+                    // One-shot diagnostic: reveals exactly which per-drop fields Twitch's details response carries,
+                    // so we know whether "already claimed" is knowable from it at all.
+                    if (!_loggedDropShape)
+                    {
+                        _loggedDropShape = true;
+                        string fields = string.Join(",", drop.Select(kv => kv.Key));
+                        string selfDump = dropSelf == null ? "NULL" : string.Join(",", dropSelf.Select(kv => $"{kv.Key}={kv.Value}"));
+                        AppLogger.Info("TwitchDrops", $"DIAG drop fields=[{fields}] self=[{selfDump}]");
+                    }
 
                     JsonArray? benefitEdges = drop["benefitEdges"]?.AsArray();
                     if (benefitEdges == null || benefitEdges.Count == 0)

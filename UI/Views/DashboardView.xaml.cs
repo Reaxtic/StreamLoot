@@ -399,6 +399,12 @@ namespace UI.Views
                             MinerStatus = Loc.Instance["Status.Mining"];
                             MinerStatusDetails = Loc.Instance["Status.MiningDetails"];
                             break;
+                        case "IdleNotCrediting":
+                            // Idle because every remaining campaign proved it earns nothing server-side — say so
+                            // instead of leaving the user staring at a miner that looks stuck on dead campaigns.
+                            MinerStatus = Loc.Instance["Status.IdleNotCrediting"];
+                            MinerStatusDetails = Loc.Instance["Status.IdleNotCreditingDetails"];
+                            break;
                     }
                 });
             };

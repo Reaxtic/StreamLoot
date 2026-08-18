@@ -193,6 +193,11 @@ namespace Core.Managers
         // when new campaigns with progress appear.
         private bool _allDoneAnnounced;
 
+        // Set when selection found candidates but every one of them is flagged as not crediting, so the idle state
+        // can explain WHY nothing is being mined instead of looking stuck.
+        private volatile bool _allCandidatesNotCrediting;
+        private bool _loggedClaimDiag;
+
         [System.Runtime.InteropServices.DllImport("PowrProf.dll", SetLastError = true)]
         private static extern bool SetSuspendState(bool hibernate, bool forceCritical, bool disableWakeEvent);
 
@@ -1665,6 +1670,7 @@ namespace Core.Managers
 
                 EnsureWatchdog();
                 _lastEngineHeartbeat = DateTime.Now;
+                _allCandidatesNotCrediting = false; // re-evaluated fresh on every pass
 
                 _startWatchingCts?.Cancel();
                 _startWatchingCts = new CancellationTokenSource();
@@ -2311,7 +2317,10 @@ namespace Core.Managers
                 AppLogger.Debug("Miner", $"[DropsInventoryManager] Next stream re-evaluation in ~{delayMs / 60000:F1} minutes at {nextCheckAt:u}");
                 AppLogger.Info("Miner", $"Next re-evaluation in {delayMs / 1000:F0}s at {nextCheckAt:u}. twitchSelected={_currentTwitchCampaign != null}, kickSelected={_currentKickCampaign != null}");
 
-                MinerStatusChanged?.Invoke(_currentTwitchCampaign != null || _currentKickCampaign != null ? "Mining" : "Idle");
+                MinerStatusChanged?.Invoke(
+                    _currentTwitchCampaign != null || _currentKickCampaign != null ? "Mining"
+                    : _allCandidatesNotCrediting ? "IdleNotCrediting"
+                    : "Idle");
             }
             catch (Exception ex)
             {
@@ -2711,15 +2720,25 @@ namespace Core.Managers
                 }
             }
 
-            // Skip campaigns that proved to not actually credit (server frozen while watched) — but never go idle:
-            // if every candidate is flagged, fall back to the full list.
+            // Skip campaigns that proved to not actually credit (server frozen while watched). When EVERY candidate
+            // is flagged there is genuinely nothing to earn, so go idle instead of pretending to mine: the old
+            // "never go idle" fallback re-picked a dead campaign every cycle, which looked like the app hanging on
+            // it. The flags are cleared hourly, so a retry happens automatically.
             lock (_creditSync)
             {
                 if (_notCreditingCampaignIds.Count != 0)
                 {
                     List<DropsCampaign> crediting = campaigns.Where(c => !_notCreditingCampaignIds.Contains(c.Id)).ToList();
                     if (crediting.Count != 0)
+                    {
                         campaigns = crediting;
+                    }
+                    else
+                    {
+                        _allCandidatesNotCrediting = true;
+                        AppLogger.Warn("Selection", $"All {campaigns.Count} candidate campaign(s) are flagged as not crediting — going idle until the next retry.");
+                        return Task.FromResult<DropsCampaign?>(null);
+                    }
                 }
             }
 
@@ -3102,9 +3121,8 @@ namespace Core.Managers
             try
             {
                 JsonArray dashboard = await _twitchGqlService.QueryFullDropsDashboardAsync();
-                JsonArray? inProgress = dashboard.Count > 0
-                    ? dashboard[0]?["data"]?["currentUser"]?["inventory"]?["dropCampaignsInProgress"]?.AsArray()
-                    : null;
+                JsonNode? inventory = dashboard.Count > 0 ? dashboard[0]?["data"]?["currentUser"]?["inventory"] : null;
+                JsonArray? inProgress = inventory?["dropCampaignsInProgress"]?.AsArray();
                 if (inProgress == null)
                     return;
 
@@ -3122,7 +3140,32 @@ namespace Core.Managers
                         rewardProgress[rid] = (min, claimed);
                     }
                 }
-                if (rewardProgress.Count == 0)
+
+                // Already-collected drops. A campaign whose drops are all claimed DISAPPEARS from
+                // dropCampaignsInProgress, so without this the reconcile would never learn it is finished and the
+                // miner would keep watching it (server progress reported as 0 => endless channel rotation).
+                HashSet<string> claimedInstanceIds = new(StringComparer.Ordinal);
+                JsonArray? eventDrops = inventory?["gameEventDrops"]?.AsArray();
+                if (eventDrops != null)
+                    foreach (JsonNode? e in eventDrops)
+                    {
+                        string? id = e?["id"]?.GetValue<string>();
+                        if (!string.IsNullOrEmpty(id))
+                            claimedInstanceIds.Add(id);
+                    }
+
+                // One-shot diagnostic: shows whether Twitch's claimed-drops inventory can be matched to our reward
+                // ids at all. Without a match the app can never learn a campaign is already collected.
+                if (!_loggedClaimDiag)
+                {
+                    _loggedClaimDiag = true;
+                    AppLogger.Info("TwitchProgress", $"DIAG gameEventDrops={claimedInstanceIds.Count}, sample=[{string.Join(" | ", claimedInstanceIds.Take(3))}]");
+                    DropsCampaign? diagCamp = _currentTwitchCampaign;
+                    if (diagCamp != null)
+                        AppLogger.Info("TwitchProgress", $"DIAG watched '{diagCamp.Name}' rewards=[{string.Join(" | ", diagCamp.Rewards.Take(3).Select(r => $"id={r.Id} inst={r.DropInstanceId} claimed={r.IsClaimed} {r.ProgressMinutes}/{r.RequiredMinutes}"))}]");
+                }
+
+                if (rewardProgress.Count == 0 && claimedInstanceIds.Count == 0)
                     return;
 
                 await Application.Current.Dispatcher.InvokeAsync(() =>
@@ -3130,13 +3173,21 @@ namespace Core.Managers
                     for (int i = 0; i < ActiveCampaigns.Count; i++)
                     {
                         DropsCampaign c = ActiveCampaigns[i];
-                        if (c.Platform != Platform.Twitch || !c.Rewards.Any(r => rewardProgress.ContainsKey(r.Id)))
+                        if (c.Platform != Platform.Twitch)
+                            continue;
+                        bool touched = c.Rewards.Any(r => rewardProgress.ContainsKey(r.Id)
+                            || (!string.IsNullOrEmpty(r.DropInstanceId) && claimedInstanceIds.Contains(r.DropInstanceId!)));
+                        if (!touched)
                             continue;
 
                         List<DropsReward> updated = c.Rewards.Select(r =>
-                            rewardProgress.TryGetValue(r.Id, out (int Minutes, bool Claimed) p)
+                        {
+                            if (!string.IsNullOrEmpty(r.DropInstanceId) && claimedInstanceIds.Contains(r.DropInstanceId!))
+                                return r with { IsClaimed = true, ProgressMinutes = r.RequiredMinutes };
+                            return rewardProgress.TryGetValue(r.Id, out (int Minutes, bool Claimed) p)
                                 ? r with { ProgressMinutes = Math.Min(p.Minutes, r.RequiredMinutes), IsClaimed = p.Claimed }
-                                : r).ToList();
+                                : r;
+                        }).ToList();
                         ActiveCampaigns[i] = c with { Rewards = updated };
                     }
 
@@ -3162,6 +3213,8 @@ namespace Core.Managers
                     DropsReward? cur = _currentTwitchCampaign.Rewards.Where(r => !r.IsClaimed).OrderBy(r => r.RequiredMinutes).FirstOrDefault();
                     if (cur != null && rewardProgress.TryGetValue(cur.Id, out (int Minutes, bool Claimed) cp))
                         watchedDiag = $"{cur.Name}={cp.Minutes}/{cur.RequiredMinutes} min";
+                    else if (cur != null)
+                        watchedDiag = $"{cur.Name}=NOT tracked server-side (campaign absent from dropCampaignsInProgress)";
 
                     // Detect a campaign that isn't actually crediting (server frozen while watched) and switch off it.
                     int serverTotal = _currentTwitchCampaign.Rewards
