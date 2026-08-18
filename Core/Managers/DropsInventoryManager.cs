@@ -727,6 +727,24 @@ namespace Core.Managers
         /// Only when the fresh campaign is completely blank (likely a failed progress capture) do we keep
         /// the higher local values to avoid wiping what the user already earned.
         /// </summary>
+        /// <summary>
+        /// Re-applies our local record of already-claimed drops to a freshly fetched campaign. Twitch rebuilds
+        /// every reward as "unclaimed, 0 minutes" (it exposes no claimed state), so without this a collected drop
+        /// reappears as pending in the Inventory and the miner keeps watching a campaign that can never credit.
+        /// </summary>
+        private static DropsCampaign ApplyClaimedLedger(DropsCampaign campaign)
+        {
+            if (!ClaimedDropsStore.Instance.HasAny)
+                return campaign;
+
+            List<DropsReward> rewards = campaign.Rewards.Select(r =>
+                !r.IsClaimed && ClaimedDropsStore.Instance.IsClaimed(campaign.Id, r.Id)
+                    ? r with { IsClaimed = true, ProgressMinutes = r.RequiredMinutes }
+                    : r).ToList();
+
+            return rewards.SequenceEqual(campaign.Rewards) ? campaign : campaign with { Rewards = rewards };
+        }
+
         private static DropsCampaign MergeCampaignProgress(DropsCampaign fresh, DropsCampaign previous)
         {
             // Availability is computed client-side (not part of the server snapshot), so carry it across reloads.
@@ -810,7 +828,7 @@ namespace Core.Managers
                     DropsCampaign toAdd = existingById.TryGetValue(c.Id, out DropsCampaign? previous)
                         ? MergeCampaignProgress(c, previous)
                         : c;
-                    ActiveCampaigns.Add(toAdd);
+                    ActiveCampaigns.Add(ApplyClaimedLedger(toAdd));
                 }
 
                 // Keep the "currently watched" references pointing at the freshly-rebuilt objects so a platform
@@ -1614,6 +1632,9 @@ namespace Core.Managers
                         else
                             AppLogger.Warn("Miner", $"Failed to apply immediate claimed-state update. campaignId={parentCampaign.Id}, rewardId={item.Id}");
 
+                        // Remember it permanently: the server won't tell us this drop is collected on later
+                        // refreshes, so without this the reward comes back as unclaimed and gets re-mined forever.
+                        ClaimedDropsStore.Instance.Add(parentCampaign.Id, item.Id);
                         StatsManager.Instance.AddClaimedDrop(parentCampaign.Platform, parentCampaign.Name, item.Name);
 
                         if (UISettingsManager.Instance.NotifyOnAutoClaimed)
@@ -3182,7 +3203,8 @@ namespace Core.Managers
 
                         List<DropsReward> updated = c.Rewards.Select(r =>
                         {
-                            if (!string.IsNullOrEmpty(r.DropInstanceId) && claimedInstanceIds.Contains(r.DropInstanceId!))
+                            if ((!string.IsNullOrEmpty(r.DropInstanceId) && claimedInstanceIds.Contains(r.DropInstanceId!))
+                                || ClaimedDropsStore.Instance.IsClaimed(c.Id, r.Id))
                                 return r with { IsClaimed = true, ProgressMinutes = r.RequiredMinutes };
                             return rewardProgress.TryGetValue(r.Id, out (int Minutes, bool Claimed) p)
                                 ? r with { ProgressMinutes = Math.Min(p.Minutes, r.RequiredMinutes), IsClaimed = p.Claimed }

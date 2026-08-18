@@ -18,7 +18,7 @@ namespace Core.Managers
 
         public event Action? StatsChanged;
 
-        private static readonly string _filePath = Path.Combine(
+        private static string FilePath => Path.Combine(
             Environment.ExpandEnvironmentVariables("%APPDATA%"), "Stream Loot", "Stats.json");
         private static readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
 
@@ -103,9 +103,9 @@ namespace Core.Managers
                     return;
                 try
                 {
-                    Directory.CreateDirectory(Path.GetDirectoryName(_filePath)!);
+                    Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
                     StatsModel model = new StatsModel { MinutesPerDay = _minutesPerDay, Claims = _claims };
-                    File.WriteAllText(_filePath, JsonSerializer.Serialize(model, _jsonOptions));
+                    File.WriteAllText(FilePath, JsonSerializer.Serialize(model, _jsonOptions));
                     _lastSave = DateTime.Now;
                     _dirty = false;
                 }
@@ -120,9 +120,9 @@ namespace Core.Managers
         {
             try
             {
-                if (!File.Exists(_filePath))
+                if (!File.Exists(FilePath))
                     return;
-                StatsModel? model = JsonSerializer.Deserialize<StatsModel>(File.ReadAllText(_filePath));
+                StatsModel? model = JsonSerializer.Deserialize<StatsModel>(File.ReadAllText(FilePath));
                 if (model == null)
                     return;
                 _minutesPerDay = model.MinutesPerDay ?? new Dictionary<string, int>(StringComparer.Ordinal);
