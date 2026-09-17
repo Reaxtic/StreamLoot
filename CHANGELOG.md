@@ -3,6 +3,20 @@
 All notable changes to **Stream Loot** are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.1.3] — 2026-09-17
+
+Kick claim and continuation reliability fixes.
+
+### Fixed
+- **Intermittent Kick claim failures** — claim requests now use uniquely correlated
+  WebView2 messages, so a simultaneous progress or channel-status response can no
+  longer be mistaken for the claim result. Empty/non-JSON responses are handled
+  safely, and an idempotent "already claimed" response correctly unlocks the next
+  reward.
+- **Kick stopped after a completed drop** — when one participating channel stops
+  crediting, the miner rotates to another live channel instead of blacklisting the
+  whole campaign and going idle before later rewards can progress.
+
 ## [1.1.2] — 2026-07-17
 
 Two Kick fixes that together stopped it from crediting at all.
@@ -209,6 +223,7 @@ Rebrand of "Stream Drop Collector" → **Stream Loot** (MIT fork; original autho
   [TwitchDropsMiner by DevilXD](https://github.com/DevilXD/TwitchDropsMiner) (MIT).
   No source code was copied; both projects are MIT-licensed.
 
+[1.1.3]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.1.3
 [1.1.2]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.1.2
 [1.1.1]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.1.1
 [1.1.0]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.1.0

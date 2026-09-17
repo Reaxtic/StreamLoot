@@ -1,8 +1,13 @@
 {
-  "version": "1.1.2",
+  "version": "1.1.3",
   "type": "Patch",
-  "changelog": "Kick fixes: stopped a 30-second re-selection loop that re-navigated the player and prevented Kick from crediting at all, and a pinned campaign with offline streamers no longer blocks the live pins behind it.",
+  "changelog": "Kick reliability: claim responses are now correlated so concurrent WebView2 messages cannot cause intermittent claim failures, already-claimed rewards correctly unblock the next reward, and a stalled channel rotates without blacklisting the entire campaign.",
   "historic_versions": [
+    {
+      "version": "1.1.2",
+      "type": "Patch",
+      "changelog": "Kick fixes: stopped a 30-second re-selection loop that re-navigated the player and prevented Kick from crediting at all, and a pinned campaign with offline streamers no longer blocks the live pins behind it."
+    },
     {
       "version": "1.1.1",
       "type": "Patch",
