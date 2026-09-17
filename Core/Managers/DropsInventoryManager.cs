@@ -3429,9 +3429,12 @@ namespace Core.Managers
                             }
                             _creditTracking[campaignId] = (serverMinutes, 0, DateTime.Now);
 
-                            // Only give up on the whole campaign (skip it) when it's NOT pinned. A pinned campaign is
-                            // the user's explicit choice, so we keep it and just hop channels.
-                            if (!pinned)
+                            // Kick campaigns commonly expose many interchangeable participating channels. A single
+                            // channel freezing after a claim must rotate to another channel, not blacklist the whole
+                            // campaign (which left Kick idle and prevented later rewards from progressing). Twitch
+                            // keeps the existing campaign-level fallback because its non-crediting state can also be
+                            // account/campaign specific.
+                            if (!pinned && (platform != Platform.Kick || string.IsNullOrWhiteSpace(currentLogin)))
                                 _notCreditingCampaignIds.Add(campaignId);
                         }
                     }

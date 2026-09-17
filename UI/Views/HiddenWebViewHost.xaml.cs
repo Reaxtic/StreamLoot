@@ -876,12 +876,20 @@ namespace UI.Views
             string bearerToken = Uri.UnescapeDataString(encodedToken); // Decode %7C -> |
 
             TaskCompletionSource<string> tcs = new TaskCompletionSource<string>();
+            // Several Kick helpers share the same WebView2 message channel (progress, channel status, claims).
+            // A claim handler used to accept the first message of ANY kind, so a concurrent KICKPROGRESS message
+            // could be parsed as claim JSON and make a valid claim look like a failure. Correlate every claim with
+            // its own prefix and ignore unrelated messages.
+            string messagePrefix = $"KICKCLAIM:{Guid.NewGuid():N}:";
 
             // One-time handler for the result
             void MessageReceivedHandler(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
             {
                 string message = e.TryGetWebMessageAsString() ?? "";
-                tcs.TrySetResult(message);
+                if (!message.StartsWith(messagePrefix, StringComparison.Ordinal))
+                    return;
+
+                tcs.TrySetResult(message.Substring(messagePrefix.Length));
                 WebView.CoreWebView2.WebMessageReceived -= MessageReceivedHandler;
             }
 
@@ -906,17 +914,27 @@ namespace UI.Views
                                 }})
                             }});
 
-                            const data = await response.json();
+                            const rawBody = await response.text();
+                            let data = {{}};
+                            try {{ data = rawBody ? JSON.parse(rawBody) : {{}}; }} catch {{}}
+
+                            const apiMessage = typeof data.message === 'string'
+                                ? data.message
+                                : (typeof data.error === 'string' ? data.error : rawBody);
+                            // Claiming is idempotent from the miner's perspective. If the first request succeeded but
+                            // its WebView message was lost, a retry may answer 'already claimed' and must still unblock
+                            // the next reward.
+                            const alreadyClaimed = /already\s+claimed|claimed\s+already/i.test(apiMessage || '');
 
                             const result = {{
-                                success: response.ok && (data.message === 'Success' || data.success === true),
-                                data: data,
-                                error: response.ok ? null : (data.message || data.error || response.statusText)
+                                success: (response.ok && (data.message === 'Success' || data.success === true)) || alreadyClaimed,
+                                status: response.status,
+                                error: response.ok ? null : (apiMessage || response.statusText)
                             }};
 
-                            window.chrome.webview.postMessage(JSON.stringify(result));
+                            window.chrome.webview.postMessage('{messagePrefix}' + JSON.stringify(result));
                         }} catch (err) {{
-                            window.chrome.webview.postMessage(JSON.stringify({{
+                            window.chrome.webview.postMessage('{messagePrefix}' + JSON.stringify({{
                                 success: false,
                                 error: err.message || 'Unknown JS error'
                             }}));
@@ -938,7 +956,12 @@ namespace UI.Views
                 }
 
                 using JsonDocument doc = JsonDocument.Parse(rawResult);
-                bool success = doc.RootElement.GetProperty("success").GetBoolean();
+                bool success = doc.RootElement.TryGetProperty("success", out JsonElement successElement)
+                    && successElement.ValueKind == JsonValueKind.True;
+                int? status = doc.RootElement.TryGetProperty("status", out JsonElement statusElement)
+                    && statusElement.ValueKind == JsonValueKind.Number
+                        ? statusElement.GetInt32()
+                        : null;
 
                 if (success)
                 {
@@ -946,10 +969,10 @@ namespace UI.Views
                 }
                 else
                 {
-                    string? error = doc.RootElement.TryGetProperty("error", out JsonElement errElem)
-                        ? errElem.GetString()
+                    string error = doc.RootElement.TryGetProperty("error", out JsonElement errElem)
+                        ? errElem.ToString()
                         : "Unknown error";
-                    AppLogger.Warn("KickClaim", $"Kick claim failed: {error}");
+                    AppLogger.Warn("KickClaim", $"Kick claim failed. status={status?.ToString() ?? "n/a"}, error={error}");
                 }
 
                 return success;
