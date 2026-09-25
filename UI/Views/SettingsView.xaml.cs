@@ -67,6 +67,7 @@ namespace UI.Views
             };
 
             Process.Start(psi);
+            ProcessExitTracker.RecordReason("User requested account reset and restart");
             System.Windows.Application.Current.Shutdown();
             Environment.Exit(0);
         }

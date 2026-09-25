@@ -21,6 +21,7 @@ namespace UI
         internal const string PipeName = "StreamLoot_ActivationPipe";
 
         private Mutex? _instanceMutex;
+        private string? _watchdogReadyEvent;
 
         public App()
         {
@@ -34,10 +35,19 @@ namespace UI
         protected override void OnStartup(StartupEventArgs e)
         {
             AppLogger.Initialize();
+            ProcessExitTracker.Initialize();
             // Log app startup + Version
             AppLogger.Info("App", $"Starting StreamLoot version {GetType().Assembly.GetName().Version}");
 
-            bool ignoreMutexRule = e.Args.Any(a => a.Equals("--updating", StringComparison.OrdinalIgnoreCase) || a.Equals("--updated", StringComparison.OrdinalIgnoreCase));
+            bool watchdogRestart = e.Args.Any(a => a.Equals("--watchdog-restart", StringComparison.OrdinalIgnoreCase));
+            bool ignoreMutexRule = watchdogRestart || e.Args.Any(a => a.Equals("--updating", StringComparison.OrdinalIgnoreCase) || a.Equals("--updated", StringComparison.OrdinalIgnoreCase));
+
+            if (watchdogRestart)
+            {
+                string? readyArg = e.Args.FirstOrDefault(a => a.StartsWith("--watchdog-ready=", StringComparison.OrdinalIgnoreCase));
+                if (readyArg != null && Guid.TryParseExact(readyArg["--watchdog-ready=".Length..], "N", out Guid readyId))
+                    _watchdogReadyEvent = $@"Local\StreamLoot_WatchdogReady_{readyId:N}";
+            }
 
             _instanceMutex = new Mutex(true, MutexName, out bool createdNew);
 
@@ -45,6 +55,7 @@ namespace UI
             {
                 // Notify existing instance
                 AppLogger.Warn("App", "Second instance detected; signaling existing instance and shutting down.");
+                ProcessExitTracker.RecordReason("Second instance; activated existing instance");
                 TryActivateExistingInstance();
                 Shutdown();
                 return;
@@ -86,6 +97,24 @@ namespace UI
             // React to sleep/resume: pause the engine before sleep (so nothing hangs on a vanishing connection),
             // and force a clean reload after resume (WebView sessions/streams are stale after sleep).
             SystemEvents.PowerModeChanged += OnPowerModeChanged;
+            SessionEnding += (_, args) => ProcessExitTracker.RecordReasonIfUnset($"Windows session ending: {args.ReasonSessionEnding}");
+        }
+
+        internal void SignalWatchdogReady()
+        {
+            if (_watchdogReadyEvent == null)
+                return;
+
+            try
+            {
+                using EventWaitHandle readyEvent = EventWaitHandle.OpenExisting(_watchdogReadyEvent);
+                readyEvent.Set();
+                AppLogger.Info("Watchdog", "Replacement window loaded; signaled the previous process.");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("Watchdog", "Could not signal replacement readiness.", ex);
+            }
         }
 
         private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
@@ -180,6 +209,7 @@ namespace UI
         // Clean up event when app closes
         protected override void OnExit(ExitEventArgs e)
         {
+            ProcessExitTracker.LogExit("WPF OnExit", e.ApplicationExitCode);
             SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
             SystemEvents.PowerModeChanged -= OnPowerModeChanged;
             base.OnExit(e);
@@ -195,6 +225,8 @@ namespace UI
 
         private void OnUnhandledException(object sender, UnhandledExceptionEventArgs e)
         {
+            if (e.IsTerminating)
+                ProcessExitTracker.RecordReason("Terminating unhandled non-UI exception");
             if (e.ExceptionObject is Exception ex)
             {
                 AppLogger.Error("App", "Unhandled non-UI exception.", ex);
