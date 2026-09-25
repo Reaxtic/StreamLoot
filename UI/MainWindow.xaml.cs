@@ -86,6 +86,7 @@ namespace UI
             InitializeComponent();
 
             Loaded += OnMainWindowLoaded;
+            Closing += (_, _) => ProcessExitTracker.RecordReasonIfUnset("Main window closed via Windows/window controls");
 
             // Initialize tray icon visibility
             IsTrayIconVisible = true;
@@ -208,6 +209,7 @@ namespace UI
 
                         // Start the real, updated app
                         Process.Start(Path.Combine(basePath, "Stream Loot"), "--updated");
+                        ProcessExitTracker.RecordReason("Update handoff completed; starting updated app");
                         Environment.Exit(0);
                         break;
                     case "--updated":
@@ -233,6 +235,8 @@ namespace UI
                         break;
                 }
             }
+
+            (System.Windows.Application.Current as App)?.SignalWatchdogReady();
         }
 
         /// <summary>
@@ -306,6 +310,7 @@ namespace UI
         /// </summary>
         private void CloseApplication()
         {
+            ProcessExitTracker.RecordReason("User selected Close / Exit");
             Close();
             Environment.Exit(0);
         }

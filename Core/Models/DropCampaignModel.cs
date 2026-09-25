@@ -53,7 +53,7 @@ namespace Core.Models
         /// <summary>Completion percentage (0–100) of this reward, derived from progress vs. required minutes.</summary>
         public int ProgressPercent => RequiredMinutes <= 0
             ? 0
-            : (int)Math.Min(100, Math.Round(ProgressMinutes * 100.0 / RequiredMinutes));
+            : (int)Math.Min(100, Math.Floor(ProgressMinutes * 100.0 / RequiredMinutes));
     }
     /// <summary>
     /// Represents a campaign that offers in-game rewards through a drops program for a specific game and platform.
@@ -89,9 +89,8 @@ namespace Core.Models
         int PinOrder = 0)
     {
         /// <summary>
-        /// True when at least one reward is fully watched but still unclaimed — typically because the game account
-        /// isn't linked, so the auto-claim keeps failing. The Inventory shows a "ready to claim / connect account"
-        /// hint for these, and the miner does not keep watching them (no watch time left to earn).
+        /// True when at least one reward is fully watched but still unclaimed. This does not imply an account-link
+        /// problem: Twitch may still be processing completion or may temporarily reject a claim.
         /// </summary>
         public bool HasClaimableUnclaimed =>
             Rewards.Any(r => !r.IsClaimed && r.RequiredMinutes > 0 && r.ProgressMinutes >= r.RequiredMinutes);

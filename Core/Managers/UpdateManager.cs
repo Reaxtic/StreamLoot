@@ -114,6 +114,7 @@ namespace Core.Managers
                     UseShellExecute = true,
                     WindowStyle = ProcessWindowStyle.Hidden
                 });
+                ProcessExitTracker.RecordReason("Update handoff to apply-update.cmd");
                 Environment.Exit(0);
             }
             catch (Exception ex)

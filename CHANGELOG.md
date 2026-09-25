@@ -19,6 +19,29 @@ Twitch campaign loading and fallback authentication fixes, built from the stable
 - **False completed/account-link state caused by an empty dashboard response** —
   integrity-error responses are no longer treated as valid campaign data.
 
+## [1.1.4] — 2026-09-25
+
+Twitch progress accuracy and safer recovery.
+
+### Fixed
+- **Pinned Twitch drops no longer stop at 98%** — Inventory progress now comes
+  only from Twitch's server. A successful watch heartbeat no longer adds a local
+  minute that Twitch may not have credited, so a pinned campaign stays active
+  until Twitch confirms the full requirement.
+- **Accurate Twitch percentages** — partial progress uses the same whole-percent
+  calculation as Twitch (`59/60` is shown as 98%, not 100%).
+- **No false account-link warning** — a failed or pending claim is shown as
+  waiting for collection. Stream Loot no longer assumes the game account is
+  disconnected.
+- **Failed claims correct stale progress immediately** — after Twitch rejects a
+  claim, all Twitch rewards are refreshed even if the miner has already moved to
+  another campaign.
+- **Watchdog restart cannot close the only working instance** — the old process
+  exits only after the replacement window confirms it is ready. Failed restarts
+  leave the current process running.
+- **Exit diagnostics** — logs now record intentional shutdown reasons and detect
+  a previous run that ended without a clean exit.
+
 ## [1.1.3] — 2026-09-17
 
 Kick claim and continuation reliability fixes.
@@ -239,6 +262,7 @@ Rebrand of "Stream Drop Collector" → **Stream Loot** (MIT fork; original autho
   [TwitchDropsMiner by DevilXD](https://github.com/DevilXD/TwitchDropsMiner) (MIT).
   No source code was copied; both projects are MIT-licensed.
 
+[1.1.4]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.1.4
 [1.1.3]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.1.3
 [1.1.2]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.1.2
 [1.1.1]: https://github.com/Reaxtic/StreamLoot/releases/tag/v1.1.1

@@ -4,6 +4,11 @@
   "changelog": "Twitch reliability: dashboard responses are read only after download completion, integrity-error bodies are rejected, and a secure Smart TV device authorization fallback is available when browser tokens keep failing.",
   "historic_versions": [
     {
+      "version": "1.1.4",
+      "type": "Patch",
+      "changelog": "Twitch progress now follows the server exactly, false account-link warnings were removed, failed claims refresh stale progress, watchdog restarts are safer, and shutdown reasons are logged."
+    },
+    {
       "version": "1.1.3",
       "type": "Patch",
       "changelog": "Kick reliability: claim responses are now correlated so concurrent WebView2 messages cannot cause intermittent claim failures, already-claimed rewards correctly unblock the next reward, and a stalled channel rotates without blacklisting the entire campaign."

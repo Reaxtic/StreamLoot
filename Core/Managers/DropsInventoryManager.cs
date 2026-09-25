@@ -263,15 +263,67 @@ namespace Core.Managers
                         // leaves that flag stuck at 1 — the very case where the hard restart is needed.
                         if (Interlocked.CompareExchange(ref _hardRestarting, 1, 0) != 0)
                             return;
-                        AppLogger.Error("Watchdog", $"Engine silent for {silentMin:F0} min and a soft restart didn't recover — hard-restarting the process.");
+                        AppLogger.Error("Watchdog", $"Engine silent for {silentMin:F0} min and a soft restart didn't recover — starting a replacement process.");
+                        bool canRetry = true;
+                        bool handoffCommitted = false;
+                        System.Diagnostics.Process? replacement = null;
                         try
                         {
-                            string? exe = Environment.ProcessPath;
-                            if (!string.IsNullOrEmpty(exe))
-                                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe, "--updated") { UseShellExecute = true });
+                            string exe = Environment.ProcessPath ?? throw new InvalidOperationException("Process executable path is unavailable.");
+                            string readyId = Guid.NewGuid().ToString("N");
+                            using EventWaitHandle readyEvent = new(false, EventResetMode.ManualReset, $@"Local\StreamLoot_WatchdogReady_{readyId}");
+                            replacement = System.Diagnostics.Process.Start(
+                                new System.Diagnostics.ProcessStartInfo(exe, $"--watchdog-restart --watchdog-ready={readyId}")
+                                { UseShellExecute = true }) ?? throw new InvalidOperationException("Process.Start returned no replacement process.");
+
+                            bool ready = false;
+                            for (int second = 0; second < 30; second++)
+                            {
+                                if (readyEvent.WaitOne(TimeSpan.FromSeconds(1)))
+                                {
+                                    ready = true;
+                                    break;
+                                }
+                                if (replacement.HasExited)
+                                    break;
+                            }
+
+                            if (!ready || replacement.HasExited)
+                            {
+                                AppLogger.Error("Watchdog", $"Replacement did not become ready; keeping the current process. childPid={replacement.Id}; exited={replacement.HasExited}; exitCode={(replacement.HasExited ? replacement.ExitCode : null)}");
+                                return;
+                            }
+
+                            ProcessExitTracker.RecordReason($"Watchdog handoff to ready replacement pid={replacement.Id} after {silentMin:F0} min without engine heartbeat");
+                            handoffCommitted = true;
+                            Environment.Exit(0);
                         }
-                        catch (Exception ex) { AppLogger.Error("Watchdog", "Relaunch failed.", ex); }
-                        Environment.Exit(0);
+                        catch (Exception ex)
+                        {
+                            AppLogger.Error("Watchdog", "Relaunch failed; keeping the current process.", ex);
+                        }
+                        finally
+                        {
+                            if (!handoffCommitted && replacement != null)
+                            {
+                                try
+                                {
+                                    if (!replacement.HasExited)
+                                    {
+                                        replacement.Kill();
+                                        canRetry = replacement.WaitForExit(TimeSpan.FromSeconds(5));
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    canRetry = false;
+                                    AppLogger.Error("Watchdog", "Could not stop the unresponsive replacement; will not spawn another one.", ex);
+                                }
+                            }
+                            replacement?.Dispose();
+                            if (canRetry)
+                                Interlocked.Exchange(ref _hardRestarting, 0);
+                        }
                         return;
                     }
 
@@ -645,7 +697,8 @@ namespace Core.Managers
             if (currentTwitchCampaign != null && _twitchCurrentlyOnline)
             {
                 _twitchWatchedSeconds++;
-                _twitchDropWatchedSeconds++;
+                // Keep the displayed Twitch drop progress at the last server-confirmed value. A successful
+                // minute-watched heartbeat only confirms receipt of the heartbeat, not that Twitch credited it.
 
                 DropsReward? nextTwitchReward = currentTwitchCampaign.Rewards
                     .Where(r => !r.IsClaimed)
@@ -660,8 +713,10 @@ namespace Core.Managers
                 {
                     int minutesToApply = twitchMinuteBucket - _twitchAppliedMinuteBucket;
                     _twitchAppliedMinuteBucket = twitchMinuteBucket;
-                    ApplyMinuteProgressToActiveCampaign(Platform.Twitch, currentTwitchCampaign.Id, minutesToApply);
-                    ApplyMinuteProgressToCoProgressingCampaigns(Platform.Twitch, currentTwitchCampaign, minutesToApply);
+                    // Twitch can accept a watch heartbeat without crediting the drop. Do not turn elapsed local
+                    // time into Inventory progress: only ReconcileTwitchProgressAsync may update Twitch rewards
+                    // from the authoritative dropCampaignsInProgress response. Otherwise 58/60 on Twitch could
+                    // become a fake 60/60 here and trigger a premature claim/account-link warning.
                     StatsManager.Instance.AddWatchedMinutes(Platform.Twitch, minutesToApply);
                 }
 
@@ -1616,6 +1671,7 @@ namespace Core.Managers
                 }
 
                 bool anyFailed = false;
+                bool twitchClaimFailed = false;
                 foreach ((DropsCampaign parentCampaign, DropsReward item) in readyToClaimRewards)
                 {
 
@@ -1653,12 +1709,20 @@ namespace Core.Managers
                         // local-vs-server desync, and snapping ProgressMinutes back to the server truth right away
                         // makes the miner keep watching the remaining minutes instead of wandering off.
                         if (parentCampaign.Platform == Platform.Twitch)
+                        {
                             _lastTwitchProgressReconcile = DateTime.MinValue;
+                            twitchClaimFailed = true;
+                        }
                         else
                             _lastKickProgressReconcile = DateTime.MinValue;
                         AppLogger.Warn("Miner", $"Claim failed (likely not yet complete server-side); will retry after next server refresh. campaignId={parentCampaign.Id}, rewardId={item.Id}, name='{item.Name}'");
                     }
                 }
+
+                // A failed Twitch claim commonly means our snapshot was stale. Refresh all Twitch rewards even if
+                // selection has already moved on, so a false 60/60 cannot remain in Inventory until the next reload.
+                if (twitchClaimFailed)
+                    await ReconcileTwitchProgressAsync(force: true);
 
                 return anyFailed;
             }
@@ -3131,11 +3195,11 @@ namespace Core.Managers
         /// crediting (e.g. account rate-limited), the bar shows the real frozen value instead of the optimistic
         /// climb. Throttled to once every ~3 minutes.
         /// </summary>
-        private async Task ReconcileTwitchProgressAsync()
+        private async Task ReconcileTwitchProgressAsync(bool force = false)
         {
-            if (_twitchGqlService == null || _currentTwitchCampaign == null || _isPaused)
+            if (_twitchGqlService == null || _isPaused)
                 return;
-            if ((DateTime.Now - _lastTwitchProgressReconcile).TotalMinutes < 3)
+            if (!force && (DateTime.Now - _lastTwitchProgressReconcile).TotalMinutes < 3)
                 return;
             _lastTwitchProgressReconcile = DateTime.Now;
 

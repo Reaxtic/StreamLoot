@@ -90,7 +90,7 @@ namespace Core.Managers
             ["Inv.EtaTip"] = ("Estimated watch time until the next drop unlocks", "Szacowany czas oglądania do następnego dropa"),
             ["Inv.NotCreditingTip"] = ("Watching this campaign is currently NOT earning server progress (e.g. a broken game-account link or a rerun channel). The miner de-prioritises it automatically.", "Oglądanie tej kampanii NIE nalicza teraz postępu na serwerze (np. zerwane połączenie konta gry lub kanał z retransmisją). Aplikacja automatycznie ją pomija."),
             ["Inv.PinOrderTip"] = ("Position in the pin queue — #1 is mined first, the rest follow automatically.", "Pozycja w kolejce przypięć — #1 kopana jako pierwsza, reszta po kolei."),
-            ["Inv.ReadyTip"] = ("Fully watched but not claimed — link your game account on the drops page, then the reward can be collected.", "W pełni obejrzane, ale nieodebrane — połącz konto gry na stronie dropów, wtedy nagrodę da się odebrać."),
+            ["Inv.ReadyTip"] = ("Twitch reports the watch requirement as complete, but the reward has not been claimed yet. Stream Loot will retry automatically.", "Twitch potwierdza ukończenie oglądania, ale nagroda nie została jeszcze odebrana. Stream Loot spróbuje ponownie automatycznie."),
             ["Inv.Watching"] = ("WATCHING", "OGLĄDANE"),
             ["Inv.Claimed"] = ("CLAIMED", "ODEBRANE"),
             ["Inv.NoCampaigns"] = ("No active drops campaigns", "Brak aktywnych kampanii z dropami"),
@@ -102,7 +102,7 @@ namespace Core.Managers
             ["Inv.NoStreamers"] = ("No streamers online", "Brak streamerów na żywo"),
             ["Inv.CategoryDrop"] = ("Category drop", "Drop kategorii"),
             ["Inv.NotCrediting"] = ("⚠ NOT CREDITING", "⚠ NIE NALICZA"),
-            ["Inv.ReadyBadge"] = ("🔗 READY — connect account to claim", "🔗 GOTOWE — połącz konto, aby odebrać"),
+            ["Inv.ReadyBadge"] = ("READY — waiting to claim", "GOTOWE — oczekuje na odbiór"),
 
             // ---- Statistics ----
             ["Stats.Title"] = ("Statistics", "Statystyki"),
