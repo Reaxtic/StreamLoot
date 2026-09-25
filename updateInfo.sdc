@@ -1,8 +1,13 @@
 {
-  "version": "1.1.3",
+  "version": "1.1.5",
   "type": "Patch",
-  "changelog": "Kick reliability: claim responses are now correlated so concurrent WebView2 messages cannot cause intermittent claim failures, already-claimed rewards correctly unblock the next reward, and a stalled channel rotates without blacklisting the entire campaign.",
+  "changelog": "Twitch reliability: dashboard responses are read only after download completion, integrity-error bodies are rejected, and a secure Smart TV device authorization fallback is available when browser tokens keep failing.",
   "historic_versions": [
+    {
+      "version": "1.1.3",
+      "type": "Patch",
+      "changelog": "Kick reliability: claim responses are now correlated so concurrent WebView2 messages cannot cause intermittent claim failures, already-claimed rewards correctly unblock the next reward, and a stalled channel rotates without blacklisting the entire campaign."
+    },
     {
       "version": "1.1.2",
       "type": "Patch",

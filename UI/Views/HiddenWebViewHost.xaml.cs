@@ -168,75 +168,299 @@ namespace UI.Views
         /// <exception cref="TimeoutException">Thrown if the Viewer Drops Dashboard response is not captured within the specified timeout period.</exception>
         public async Task<string> CaptureViewerDropsDashboardResponseAsync(int timeoutMs = 10000, CancellationToken ct = default)
         {
-            TaskCompletionSource<string> tcs = new TaskCompletionSource<string>();
+            TaskCompletionSource<string> tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            ConcurrentDictionary<string, byte> dashboardRequestIds = new();
+            ConcurrentDictionary<string, byte> candidateRequestIds = new();
+            CoreWebView2DevToolsProtocolEventReceiver? requestWillBeSent = null;
+            CoreWebView2DevToolsProtocolEventReceiver? responseReceived = null;
+            CoreWebView2DevToolsProtocolEventReceiver? loadingFinished = null;
+            CoreWebView2DevToolsProtocolEventReceiver? loadingFailed = null;
+            EventHandler<CoreWebView2DevToolsProtocolEventReceivedEventArgs>? onRequestWillBeSent = null;
+            EventHandler<CoreWebView2DevToolsProtocolEventReceivedEventArgs>? onResponseReceived = null;
+            EventHandler<CoreWebView2DevToolsProtocolEventReceivedEventArgs>? onLoadingFinished = null;
+            EventHandler<CoreWebView2DevToolsProtocolEventReceivedEventArgs>? onLoadingFailed = null;
+            int cleanedUp = 0;
 
-            await WebView.CoreWebView2.CallDevToolsProtocolMethodAsync("Network.enable", "{}");
+            static bool IsTwitchGqlResponse(JsonElement response)
+            {
+                if (!response.TryGetProperty("url", out JsonElement urlElement))
+                    return false;
 
-            CoreWebView2DevToolsProtocolEventReceiver responseReceived = WebView.CoreWebView2.GetDevToolsProtocolEventReceiver("Network.responseReceived");
+                string? url = urlElement.GetString();
+                return Uri.TryCreate(url, UriKind.Absolute, out Uri? uri) &&
+                       string.Equals(uri.Host, "gql.twitch.tv", StringComparison.OrdinalIgnoreCase) &&
+                       uri.AbsolutePath.StartsWith("/gql", StringComparison.OrdinalIgnoreCase);
+            }
 
-            async void Handler(object? s, CoreWebView2DevToolsProtocolEventReceivedEventArgs e)
+            static bool ContainsDropsDashboard(string body)
             {
                 try
                 {
-                    JsonElement payload = JsonDocument.Parse(e.ParameterObjectAsJson).RootElement;
-                    string url = payload.GetProperty("response").GetProperty("url").GetString() ?? "";
-                    string? requestId = payload.GetProperty("requestId").GetString();
+                    using JsonDocument document = JsonDocument.Parse(body);
+                    IEnumerable<JsonElement> responses = document.RootElement.ValueKind == JsonValueKind.Array
+                        ? document.RootElement.EnumerateArray()
+                        : new[] { document.RootElement };
 
-                    if (url == "https://gql.twitch.tv/gql" && requestId != null)
+                    foreach (JsonElement response in responses)
                     {
-                        JsonElement headers = payload.GetProperty("response").GetProperty("headers");
-                        if (headers.TryGetProperty("content-type", out JsonElement ctHeader) &&
-                            ctHeader.GetString()?.Contains("application/json") == true)
+                        if (response.ValueKind != JsonValueKind.Object ||
+                            !response.TryGetProperty("data", out JsonElement data) ||
+                            data.ValueKind != JsonValueKind.Object ||
+                            !data.TryGetProperty("currentUser", out JsonElement currentUser) ||
+                            currentUser.ValueKind != JsonValueKind.Object ||
+                            !currentUser.TryGetProperty("dropCampaigns", out JsonElement campaigns))
                         {
-                            // Get the response body
-                            string bodyResult = await WebView.CoreWebView2.CallDevToolsProtocolMethodAsync(
-                                "Network.getResponseBody",
-                                JsonSerializer.Serialize(new { requestId }));
+                            continue;
+                        }
 
-                            JsonElement bodyJson = JsonDocument.Parse(bodyResult).RootElement;
-                            string body = bodyJson.GetProperty("body").GetString() ?? "";
+                        if (campaigns.ValueKind == JsonValueKind.Array)
+                            return true;
+                    }
+                }
+                catch (JsonException)
+                {
+                    // Another Twitch GQL response; wait for the dashboard response.
+                }
 
-                            AppLogger.Debug("WebViewCapture", $"Body captured for ViewerDropsDashboard response: {body}\n\nlength={body.Length}");
+                return false;
+            }
 
-                            // Twitch's FIRST dashboard response is the integrity challenge ("IntegrityCheckFailed",
-                            // dropCampaigns: null). Skip it and wait for the post-challenge success the browser
-                            // produces on its retry — otherwise we'd capture the empty error body.
-                            bool isDropsDashboard = body.Contains("ViewerDropsDashboard") || body.Contains("rewardCampaignsAvailableToUser");
-                            bool isIntegrityFailure = body.Contains("IntegrityCheckFailed") || body.Contains("failed integrity check");
-                            if (isDropsDashboard && !isIntegrityFailure)
+            static string DescribeGqlResponse(string body)
+            {
+                try
+                {
+                    using JsonDocument document = JsonDocument.Parse(body);
+                    IEnumerable<JsonElement> responses = document.RootElement.ValueKind == JsonValueKind.Array
+                        ? document.RootElement.EnumerateArray()
+                        : new[] { document.RootElement };
+
+                    List<string> descriptions = new();
+                    foreach (JsonElement response in responses.Take(4))
+                    {
+                        List<string> parts = new();
+                        if (response.ValueKind == JsonValueKind.Object &&
+                            response.TryGetProperty("data", out JsonElement data) &&
+                            data.ValueKind == JsonValueKind.Object)
+                        {
+                            parts.Add("data=" + string.Join(',', data.EnumerateObject().Select(p => p.Name).Take(8)));
+                            if (data.TryGetProperty("currentUser", out JsonElement currentUser) &&
+                                currentUser.ValueKind == JsonValueKind.Object)
                             {
-                                Dispatcher.Invoke(() =>
-                                {
-                                    responseReceived.DevToolsProtocolEventReceived -= Handler;
-                                });
-
-                                tcs.TrySetResult(body);
-                                return;
+                                parts.Add("currentUser=" + string.Join(',', currentUser.EnumerateObject().Select(p => p.Name).Take(12)));
                             }
                         }
+
+                        if (response.ValueKind == JsonValueKind.Object &&
+                            response.TryGetProperty("errors", out JsonElement errors) &&
+                            errors.ValueKind == JsonValueKind.Array)
+                        {
+                            List<string> codes = new();
+                            foreach (JsonElement error in errors.EnumerateArray().Take(4))
+                            {
+                                if (error.TryGetProperty("extensions", out JsonElement extensions) &&
+                                    extensions.TryGetProperty("code", out JsonElement code))
+                                {
+                                    codes.Add(code.ToString());
+                                }
+                            }
+                            parts.Add("errors=" + (codes.Count > 0 ? string.Join(',', codes) : errors.GetArrayLength().ToString()));
+                        }
+
+                        descriptions.Add(parts.Count > 0 ? string.Join(';', parts) : response.ValueKind.ToString());
                     }
+
+                    return string.Join(" | ", descriptions);
                 }
                 catch (Exception ex)
                 {
-                    AppLogger.Warn("WebViewCapture", $"ViewerDropsDashboard response handler parse failure: {ex.Message}");
+                    return "unparseable:" + ex.GetType().Name;
                 }
             }
 
-            responseReceived.DevToolsProtocolEventReceived += Handler;
-
-            // Trigger the real request
-            await NavigateAsync("https://www.twitch.tv/drops/campaigns?t=" + DateTimeOffset.Now.ToUnixTimeMilliseconds());
-
-            Task result = await Task.WhenAny(tcs.Task, Task.Delay(timeoutMs, ct));
-            responseReceived.DevToolsProtocolEventReceived -= Handler;
-
-            if (result != tcs.Task)
+            void Cleanup()
             {
-                AppLogger.Warn("WebViewCapture", $"Timeout capturing ViewerDropsDashboard response after {timeoutMs}ms.");
-                throw new TimeoutException("Failed to capture ViewerDropsDashboard response");
+                if (Interlocked.Exchange(ref cleanedUp, 1) != 0 || WebView.Dispatcher.HasShutdownStarted)
+                    return;
+
+                _ = WebView.Dispatcher.InvokeAsync(() =>
+                {
+                    if (requestWillBeSent != null && onRequestWillBeSent != null)
+                        requestWillBeSent.DevToolsProtocolEventReceived -= onRequestWillBeSent;
+                    if (responseReceived != null && onResponseReceived != null)
+                        responseReceived.DevToolsProtocolEventReceived -= onResponseReceived;
+                    if (loadingFinished != null && onLoadingFinished != null)
+                        loadingFinished.DevToolsProtocolEventReceived -= onLoadingFinished;
+                    if (loadingFailed != null && onLoadingFailed != null)
+                        loadingFailed.DevToolsProtocolEventReceived -= onLoadingFailed;
+                });
             }
 
-            return await tcs.Task;
+            async Task TryCaptureBodyAsync(string requestId)
+            {
+                try
+                {
+                    // Network.responseReceived can fire before Chromium makes the body readable. Waiting for
+                    // Network.loadingFinished prevents WebView2 from rejecting getResponseBody intermittently.
+                    string bodyResult = await (await WebView.Dispatcher.InvokeAsync(async () =>
+                        await WebView.CoreWebView2.CallDevToolsProtocolMethodAsync(
+                            "Network.getResponseBody",
+                            JsonSerializer.Serialize(new { requestId })))).ConfigureAwait(false);
+
+                    using JsonDocument bodyDocument = JsonDocument.Parse(bodyResult);
+                    JsonElement root = bodyDocument.RootElement;
+                    string body = root.TryGetProperty("body", out JsonElement bodyElement)
+                        ? bodyElement.GetString() ?? string.Empty
+                        : string.Empty;
+
+                    if (root.TryGetProperty("base64Encoded", out JsonElement base64Element) &&
+                        base64Element.ValueKind == JsonValueKind.True && body.Length > 0)
+                    {
+                        body = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(body));
+                    }
+
+                    AppLogger.Info("WebViewCapture", $"Completed ViewerDropsDashboard response. length={body.Length}; shape={DescribeGqlResponse(body)}");
+
+                    if (!ContainsDropsDashboard(body))
+                        return;
+
+                    AppLogger.Info("WebViewCapture", $"Captured complete ViewerDropsDashboard response. length={body.Length}");
+                    Cleanup();
+                    tcs.TrySetResult(body);
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn("WebViewCapture", $"Could not read completed ViewerDropsDashboard response {requestId}: {ex.Message}");
+                }
+            }
+
+            await (await WebView.Dispatcher.InvokeAsync(async () =>
+            {
+                await WebView.CoreWebView2.CallDevToolsProtocolMethodAsync("Network.enable", "{}");
+
+                requestWillBeSent = WebView.CoreWebView2.GetDevToolsProtocolEventReceiver("Network.requestWillBeSent");
+                responseReceived = WebView.CoreWebView2.GetDevToolsProtocolEventReceiver("Network.responseReceived");
+                loadingFinished = WebView.CoreWebView2.GetDevToolsProtocolEventReceiver("Network.loadingFinished");
+                loadingFailed = WebView.CoreWebView2.GetDevToolsProtocolEventReceiver("Network.loadingFailed");
+
+                onRequestWillBeSent = (_, e) =>
+                {
+                    try
+                    {
+                        using JsonDocument document = JsonDocument.Parse(e.ParameterObjectAsJson);
+                        JsonElement payload = document.RootElement;
+                        if (!payload.TryGetProperty("requestId", out JsonElement requestIdElement) ||
+                            !payload.TryGetProperty("request", out JsonElement request) ||
+                            !request.TryGetProperty("postData", out JsonElement postDataElement))
+                        {
+                            return;
+                        }
+
+                        string? requestId = requestIdElement.GetString();
+                        string? postData = postDataElement.GetString();
+                        if (!string.IsNullOrWhiteSpace(requestId) &&
+                            postData?.Contains("ViewerDropsDashboard", StringComparison.Ordinal) == true)
+                        {
+                            dashboardRequestIds.TryAdd(requestId, 0);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Debug("WebViewCapture", $"Ignoring malformed Twitch request event: {ex.Message}");
+                    }
+                };
+
+                onResponseReceived = (_, e) =>
+                {
+                    try
+                    {
+                        using JsonDocument document = JsonDocument.Parse(e.ParameterObjectAsJson);
+                        JsonElement payload = document.RootElement;
+                        if (!payload.TryGetProperty("requestId", out JsonElement requestIdElement) ||
+                            !payload.TryGetProperty("response", out JsonElement response) ||
+                            !IsTwitchGqlResponse(response))
+                        {
+                            return;
+                        }
+
+                        string? requestId = requestIdElement.GetString();
+                        if (!string.IsNullOrWhiteSpace(requestId) && dashboardRequestIds.ContainsKey(requestId))
+                            candidateRequestIds.TryAdd(requestId, 0);
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Debug("WebViewCapture", $"Ignoring malformed Twitch response event: {ex.Message}");
+                    }
+                };
+
+                onLoadingFinished = (sender, e) =>
+                {
+                    try
+                    {
+                        using JsonDocument document = JsonDocument.Parse(e.ParameterObjectAsJson);
+                        if (!document.RootElement.TryGetProperty("requestId", out JsonElement requestIdElement))
+                            return;
+
+                        string? requestId = requestIdElement.GetString();
+                        if (!string.IsNullOrWhiteSpace(requestId) && candidateRequestIds.TryRemove(requestId, out _))
+                            _ = TryCaptureBodyAsync(requestId);
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Debug("WebViewCapture", $"Ignoring malformed loading-finished event: {ex.Message}");
+                    }
+                };
+
+                onLoadingFailed = (sender, e) =>
+                {
+                    try
+                    {
+                        using JsonDocument document = JsonDocument.Parse(e.ParameterObjectAsJson);
+                        if (document.RootElement.TryGetProperty("requestId", out JsonElement requestIdElement))
+                        {
+                            string? requestId = requestIdElement.GetString();
+                            if (!string.IsNullOrWhiteSpace(requestId))
+                            {
+                                dashboardRequestIds.TryRemove(requestId, out _);
+                                candidateRequestIds.TryRemove(requestId, out _);
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // Nothing to capture from a failed request.
+                    }
+                };
+
+                requestWillBeSent.DevToolsProtocolEventReceived += onRequestWillBeSent;
+                responseReceived.DevToolsProtocolEventReceived += onResponseReceived;
+                loadingFinished.DevToolsProtocolEventReceived += onLoadingFinished;
+                loadingFailed.DevToolsProtocolEventReceived += onLoadingFailed;
+            }));
+
+            using CancellationTokenRegistration cancellationRegistration = ct.Register(() =>
+            {
+                Cleanup();
+                tcs.TrySetCanceled(ct);
+            });
+
+            try
+            {
+                await NavigateAsync("https://www.twitch.tv/drops/campaigns?t=" + DateTimeOffset.Now.ToUnixTimeMilliseconds());
+                Task completed = await Task.WhenAny(tcs.Task, Task.Delay(timeoutMs));
+                if (completed != tcs.Task)
+                {
+                    Cleanup();
+                    ct.ThrowIfCancellationRequested();
+                    AppLogger.Warn("WebViewCapture", $"Timeout capturing ViewerDropsDashboard response after {timeoutMs}ms.");
+                    throw new TimeoutException("Failed to capture ViewerDropsDashboard response");
+                }
+
+                return await tcs.Task;
+            }
+            finally
+            {
+                Cleanup();
+            }
         }
         /// <summary>
         /// Asynchronously captures the response body of the Twitch drops progress request from the embedded web viewer.
@@ -1101,6 +1325,7 @@ namespace UI.Views
             // ExecuteScriptAsync returns a JSON string literal: e.g. "\"{...}\""
             return await WebView.CoreWebView2.ExecuteScriptAsync(script);
         }
+
         /// <summary>
         /// Asynchronously waits for the next navigation to complete in the associated WebView control.
         /// </summary>

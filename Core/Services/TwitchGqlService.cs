@@ -9,6 +9,8 @@ using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.IO;
+using System.Security.Cryptography;
+using System.Diagnostics;
 
 namespace Core.Services
 {
@@ -22,6 +24,15 @@ namespace Core.Services
         private string? _deviceId;
         private string? _accessToken;
         private string? _userId;
+        private bool _omitIntegrityHeader;
+
+        private const string AndroidClientId = "ue6666qo983tsx6so1t0vnawi233wa";
+        private const string AndroidUserAgent =
+            "Mozilla/5.0 (Linux; Android 7.1; Smart Box C1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36";
+        private static readonly string _twitchDeviceTokenPath = Path.Combine(
+            Environment.ExpandEnvironmentVariables("%APPDATA%"),
+            "Stream Loot",
+            "TwitchDeviceToken.bin");
 
         /// <inheritdoc />
         public bool LastDashboardFetchFailed { get; private set; }
@@ -98,6 +109,13 @@ namespace Core.Services
         /// <exception cref="InvalidOperationException">Thrown if the Client-Integrity token cannot be captured from the HTTP headers.</exception>
         private async Task RefreshHeadersAsync(CancellationToken ct = default, bool force = false)
         {
+            string? savedDeviceToken = TryLoadTwitchDeviceToken();
+            if (!string.IsNullOrWhiteSpace(savedDeviceToken))
+            {
+                await ConfigureAndroidCompatibilityAsync(savedDeviceToken);
+                return;
+            }
+
             // Fast path: a previously captured token is still valid, so skip the
             // expensive WebView navigation entirely.
             if (!force && HeadersAreFresh)
@@ -246,8 +264,164 @@ namespace Core.Services
             if (string.IsNullOrEmpty(token))
                 throw new InvalidOperationException("auth-token cookie not found");
 
-            return "OAuth " + token.ToLower();
+            return NormalizeAuthToken(token);
         }
+
+        private static string NormalizeAuthToken(string token)
+        {
+            if (string.IsNullOrWhiteSpace(token))
+                throw new InvalidOperationException("Twitch access token was empty");
+
+            return token.StartsWith("OAuth ", StringComparison.OrdinalIgnoreCase)
+                ? "OAuth " + token[6..].ToLowerInvariant()
+                : "OAuth " + token.ToLowerInvariant();
+        }
+
+        private async Task ConfigureAndroidCompatibilityAsync(string accessToken)
+        {
+            _clientId = AndroidClientId;
+            _accessToken = NormalizeAuthToken(accessToken);
+            _omitIntegrityHeader = true;
+            _integrityToken = "not-required";
+            _headersValidUntilUtc = DateTimeOffset.UtcNow + _headerMaxCacheTtl;
+            _deviceId ??= await _host.GetCookieValueAsync("https://twitch.tv", "unique_id");
+
+            _httpClient.DefaultRequestHeaders.UserAgent.Clear();
+            _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", AndroidUserAgent);
+            AppLogger.Debug("TwitchGql", "Configured Twitch Smart TV compatibility client from the local device authorization.");
+        }
+
+        private static string? TryLoadTwitchDeviceToken()
+        {
+            try
+            {
+                if (!File.Exists(_twitchDeviceTokenPath))
+                    return null;
+
+                byte[] encrypted = File.ReadAllBytes(_twitchDeviceTokenPath);
+                byte[] clear = ProtectedData.Unprotect(encrypted, null, DataProtectionScope.CurrentUser);
+                string token = Encoding.UTF8.GetString(clear);
+                CryptographicOperations.ZeroMemory(clear);
+                return string.IsNullOrWhiteSpace(token) ? null : token;
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("TwitchGql", $"Could not read the local Twitch device authorization. {ex.Message}");
+                return null;
+            }
+        }
+
+        private static void SaveTwitchDeviceToken(string token)
+        {
+            byte[] clear = Encoding.UTF8.GetBytes(token);
+            try
+            {
+                byte[] encrypted = ProtectedData.Protect(clear, null, DataProtectionScope.CurrentUser);
+                Directory.CreateDirectory(Path.GetDirectoryName(_twitchDeviceTokenPath)!);
+                File.WriteAllBytes(_twitchDeviceTokenPath, encrypted);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(clear);
+            }
+        }
+
+        private static async Task<string?> AcquireTwitchDeviceTokenAsync(CancellationToken ct)
+        {
+            using HttpClient client = new(new HttpClientHandler
+            {
+                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+            })
+            {
+                Timeout = TimeSpan.FromSeconds(30)
+            };
+            client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", AndroidUserAgent);
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Client-ID", AndroidClientId);
+
+            using FormUrlEncodedContent deviceContent = new(new Dictionary<string, string>
+            {
+                ["client_id"] = AndroidClientId,
+                ["scopes"] = string.Empty
+            });
+            using HttpResponseMessage deviceResponse = await client.PostAsync("https://id.twitch.tv/oauth2/device", deviceContent, ct);
+            string deviceJson = await deviceResponse.Content.ReadAsStringAsync(ct);
+            if (!deviceResponse.IsSuccessStatusCode)
+            {
+                JsonNode? errorResponse = JsonNode.Parse(deviceJson);
+                string error = errorResponse?["error"]?.ToString()
+                    ?? errorResponse?["message"]?.ToString()
+                    ?? errorResponse?["error_description"]?.ToString()
+                    ?? "unknown";
+                AppLogger.Warn("TwitchGql", $"Twitch device-code request failed. status={(int)deviceResponse.StatusCode}, error={error}.");
+            }
+            deviceResponse.EnsureSuccessStatusCode();
+
+            JsonNode device = JsonNode.Parse(deviceJson)
+                ?? throw new InvalidOperationException("Twitch device authorization returned an empty response.");
+            string deviceCode = device["device_code"]?.GetValue<string>()
+                ?? throw new InvalidOperationException("Twitch device authorization did not return a device code.");
+            string userCode = device["user_code"]?.GetValue<string>()
+                ?? throw new InvalidOperationException("Twitch device authorization did not return a user code.");
+            string verificationUri = device["verification_uri"]?.GetValue<string>()
+                ?? "https://www.twitch.tv/activate";
+            int intervalSeconds = Math.Max(5, device["interval"]?.GetValue<int>() ?? 5);
+            int expiresInSeconds = Math.Clamp(device["expires_in"]?.GetValue<int>() ?? 900, 60, 1800);
+
+            string separator = verificationUri.Contains('?') ? "&" : "?";
+            string authorizationUrl = verificationUri.Contains("device-code=", StringComparison.OrdinalIgnoreCase)
+                ? verificationUri
+                : verificationUri + separator + "device-code=" + Uri.EscapeDataString(userCode);
+
+            AppLogger.Info("TwitchGql", "Twitch device authorization is required; opening the official activation page.");
+            Process.Start(new ProcessStartInfo(authorizationUrl) { UseShellExecute = true });
+            await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
+                System.Windows.MessageBox.Show(
+                    $"Twitch wymaga jednorazowego zatwierdzenia urządzenia.\n\nKod: {userCode}\n\nW otwartej przeglądarce zatwierdź dostęp. Stream Loot będzie czekał na potwierdzenie.",
+                    "Stream Loot — autoryzacja Twitch",
+                    System.Windows.MessageBoxButton.OK,
+                    System.Windows.MessageBoxImage.Information));
+
+            DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(expiresInSeconds);
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(intervalSeconds), ct);
+                using FormUrlEncodedContent tokenContent = new(new Dictionary<string, string>
+                {
+                    ["client_id"] = AndroidClientId,
+                    ["device_code"] = deviceCode,
+                    ["grant_type"] = "urn:ietf:params:oauth:grant-type:device_code"
+                });
+                using HttpResponseMessage tokenResponse = await client.PostAsync("https://id.twitch.tv/oauth2/token", tokenContent, ct);
+                string tokenJson = await tokenResponse.Content.ReadAsStringAsync(ct);
+                JsonNode? tokenResult = JsonNode.Parse(tokenJson);
+                if (tokenResponse.IsSuccessStatusCode)
+                {
+                    string token = tokenResult?["access_token"]?.GetValue<string>()
+                        ?? throw new InvalidOperationException("Twitch approved the device but returned no access token.");
+                    SaveTwitchDeviceToken(token);
+                    AppLogger.Info("TwitchGql", "Twitch device authorization completed and was stored securely for this Windows user.");
+                    return token;
+                }
+
+                string? error = tokenResult?["error"]?.GetValue<string>();
+                if (string.Equals(error, "authorization_pending", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (string.Equals(error, "slow_down", StringComparison.OrdinalIgnoreCase))
+                {
+                    intervalSeconds += 5;
+                    continue;
+                }
+                if (string.Equals(error, "access_denied", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Twitch device authorization was denied.");
+                if (string.Equals(error, "expired_token", StringComparison.OrdinalIgnoreCase))
+                    break;
+
+                throw new InvalidOperationException($"Twitch device authorization failed: {error ?? tokenResponse.StatusCode.ToString()}.");
+            }
+
+            throw new TimeoutException("Twitch device authorization expired before it was approved.");
+        }
+
         /// <summary>
         /// Asynchronously retrieves the SHA-256 hash of a persisted GraphQL query for the specified operation name.
         /// </summary>
@@ -352,7 +526,8 @@ namespace Core.Services
                     Content = JsonContent.Create(payload)
                 };
                 request.Headers.TryAddWithoutValidation("Client-ID", _clientId);
-                request.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
+                if (!_omitIntegrityHeader)
+                    request.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
                 request.Headers.TryAddWithoutValidation("Authorization", _accessToken);
                 if (!string.IsNullOrEmpty(_deviceId))
                     request.Headers.TryAddWithoutValidation("X-Device-Id", _deviceId);
@@ -370,7 +545,8 @@ namespace Core.Services
                         Content = JsonContent.Create(payload)
                     };
                     retryRequest.Headers.TryAddWithoutValidation("Client-ID", _clientId);
-                    retryRequest.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
+                    if (!_omitIntegrityHeader)
+                        retryRequest.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
                     retryRequest.Headers.TryAddWithoutValidation("Authorization", _accessToken);
                     if (!string.IsNullOrEmpty(_deviceId))
                         retryRequest.Headers.TryAddWithoutValidation("X-Device-Id", _deviceId);
@@ -449,7 +625,8 @@ namespace Core.Services
                         Content = JsonContent.Create(payload)
                     };
                     request.Headers.TryAddWithoutValidation("Client-ID", _clientId);
-                    request.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
+                    if (!_omitIntegrityHeader)
+                        request.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
                     request.Headers.TryAddWithoutValidation("Authorization", _accessToken);
                     if (!string.IsNullOrEmpty(_deviceId))
                         request.Headers.TryAddWithoutValidation("X-Device-Id", _deviceId);
@@ -528,7 +705,8 @@ namespace Core.Services
                     Content = JsonContent.Create(payload)
                 };
                 request.Headers.TryAddWithoutValidation("Client-ID", _clientId);
-                request.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
+                if (!_omitIntegrityHeader)
+                    request.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
                 request.Headers.TryAddWithoutValidation("Authorization", _accessToken);
                 if (!string.IsNullOrEmpty(_deviceId))
                     request.Headers.TryAddWithoutValidation("X-Device-Id", _deviceId);
@@ -654,7 +832,8 @@ namespace Core.Services
 
             using HttpRequestMessage request = new(HttpMethod.Post, "https://gql.twitch.tv/gql") { Content = JsonContent.Create(payload) };
             request.Headers.TryAddWithoutValidation("Client-ID", _clientId);
-            request.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
+            if (!_omitIntegrityHeader)
+                request.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
             request.Headers.TryAddWithoutValidation("Authorization", _accessToken);
             if (!string.IsNullOrEmpty(_deviceId))
                 request.Headers.TryAddWithoutValidation("X-Device-Id", _deviceId);
@@ -755,7 +934,8 @@ namespace Core.Services
                 Content = JsonContent.Create(payload)
             };
             request.Headers.TryAddWithoutValidation("Client-ID", _clientId);
-            request.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
+            if (!_omitIntegrityHeader)
+                request.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
             request.Headers.TryAddWithoutValidation("Authorization", _accessToken);
 
             if (!string.IsNullOrEmpty(_deviceId))
@@ -810,7 +990,8 @@ namespace Core.Services
             };
 
             request.Headers.TryAddWithoutValidation("Client-ID", _clientId);
-            request.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
+            if (!_omitIntegrityHeader)
+                request.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
             request.Headers.TryAddWithoutValidation("Authorization", _accessToken);
 
             if (!string.IsNullOrEmpty(_deviceId))
@@ -821,6 +1002,29 @@ namespace Core.Services
 
             if (!response.IsSuccessStatusCode || jsonText.Contains("\"errors\""))
             {
+                // Twitch currently rejects some page-issued integrity tokens while accepting the same authenticated
+                // request without that optional header. Probe once and remember the working mode for this session.
+                using HttpRequestMessage noIntegrityRequest = new(HttpMethod.Post, "https://gql.twitch.tv/gql")
+                {
+                    Content = JsonContent.Create(payload)
+                };
+                noIntegrityRequest.Headers.TryAddWithoutValidation("Client-ID", _clientId);
+                noIntegrityRequest.Headers.TryAddWithoutValidation("Authorization", _accessToken);
+                if (!string.IsNullOrEmpty(_deviceId))
+                    noIntegrityRequest.Headers.TryAddWithoutValidation("X-Device-Id", _deviceId);
+
+                using HttpResponseMessage noIntegrityResponse = await _httpClient.SendAsync(noIntegrityRequest, ct);
+                string noIntegrityJson = await noIntegrityResponse.Content.ReadAsStringAsync(ct);
+                if (noIntegrityResponse.IsSuccessStatusCode && !noIntegrityJson.Contains("\"errors\""))
+                {
+                    _omitIntegrityHeader = true;
+                    LastDashboardFetchFailed = false;
+                    AppLogger.Info("TwitchGql", "Dashboard request succeeded without Client-Integrity; using compatibility mode.");
+                    return JsonNode.Parse(noIntegrityJson)!.AsArray();
+                }
+
+                AppLogger.Warn("TwitchGql", $"Dashboard compatibility probe failed. status={(int)noIntegrityResponse.StatusCode}, hasErrors={noIntegrityJson.Contains("\"errors\"")}.");
+
                 AppLogger.Warn("TwitchGql", $"QueryFullDropsDashboard initial call failed. status={(int)response.StatusCode}, hasErrors={jsonText.Contains("\"errors\"")}. Refreshing headers and retrying.");
                 await RefreshHeadersAsync(ct, force: true);
 
@@ -834,7 +1038,8 @@ namespace Core.Services
                 };
 
                 newRequest.Headers.TryAddWithoutValidation("Client-ID", _clientId);
-                newRequest.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
+                if (!_omitIntegrityHeader)
+                    newRequest.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
                 newRequest.Headers.TryAddWithoutValidation("Authorization", _accessToken);
 
                 if (!string.IsNullOrEmpty(_deviceId))
@@ -865,6 +1070,31 @@ namespace Core.Services
                         }
                     }
 
+                    string? deviceToken = await AcquireTwitchDeviceTokenAsync(ct);
+                    if (!string.IsNullOrWhiteSpace(deviceToken))
+                    {
+                        await ConfigureAndroidCompatibilityAsync(deviceToken);
+                        using HttpRequestMessage authorizedRequest = new(HttpMethod.Post, "https://gql.twitch.tv/gql")
+                        {
+                            Content = JsonContent.Create(payload)
+                        };
+                        authorizedRequest.Headers.TryAddWithoutValidation("Client-ID", AndroidClientId);
+                        authorizedRequest.Headers.TryAddWithoutValidation("Authorization", _accessToken);
+                        if (!string.IsNullOrEmpty(_deviceId))
+                            authorizedRequest.Headers.TryAddWithoutValidation("X-Device-Id", _deviceId);
+
+                        using HttpResponseMessage authorizedResponse = await _httpClient.SendAsync(authorizedRequest, ct);
+                        string authorizedJson = await authorizedResponse.Content.ReadAsStringAsync(ct);
+                        if (authorizedResponse.IsSuccessStatusCode && !authorizedJson.Contains("\"errors\""))
+                        {
+                            LastDashboardFetchFailed = false;
+                            AppLogger.Info("TwitchGql", "Dashboard request succeeded after Twitch device authorization.");
+                            return JsonNode.Parse(authorizedJson)!.AsArray();
+                        }
+
+                        AppLogger.Warn("TwitchGql", $"Authorized Smart TV dashboard request failed. status={(int)authorizedResponse.StatusCode}, hasErrors={authorizedJson.Contains("\"errors\"")}.");
+                    }
+
                     LastDashboardFetchFailed = true;
                     throw new InvalidOperationException("Failed integrity, please wait a while and try again.");
                 }
@@ -887,7 +1117,7 @@ namespace Core.Services
         /// </summary>
         private async Task<JsonArray> QueryFullDropsDashboardViaWebViewAsync(CancellationToken ct)
         {
-            string body = await _host.CaptureViewerDropsDashboardResponseAsync(20000, ct);
+            string body = await _host.CaptureViewerDropsDashboardResponseAsync(35000, ct);
             JsonNode? parsed = JsonNode.Parse(body);
 
             JsonObject? dropsDashboard = null;
@@ -950,7 +1180,8 @@ namespace Core.Services
                 };
 
                 request.Headers.TryAddWithoutValidation("Client-ID", _clientId);
-                request.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
+                if (!_omitIntegrityHeader)
+                    request.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
                 request.Headers.TryAddWithoutValidation("Authorization", _accessToken);
                 if (!string.IsNullOrEmpty(_deviceId))
                     request.Headers.TryAddWithoutValidation("X-Device-Id", _deviceId);
@@ -978,7 +1209,8 @@ namespace Core.Services
                     };
 
                     retryRequest.Headers.TryAddWithoutValidation("Client-ID", _clientId);
-                    retryRequest.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
+                    if (!_omitIntegrityHeader)
+                        retryRequest.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
                     retryRequest.Headers.TryAddWithoutValidation("Authorization", _accessToken);
                     if (!string.IsNullOrEmpty(_deviceId))
                         retryRequest.Headers.TryAddWithoutValidation("X-Device-Id", _deviceId);

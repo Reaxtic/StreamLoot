@@ -3,6 +3,22 @@
 All notable changes to **Stream Loot** are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.1.5] — 2026-09-25
+
+Twitch campaign loading and fallback authentication fixes, built from the stable
+1.1.3 release.
+
+### Fixed
+- **Twitch campaigns sometimes disappeared after a restart** — the WebView fallback
+  now waits until the matching dashboard response has fully downloaded before it
+  reads the body, instead of intermittently failing too early.
+- **A rejected browser integrity token stopped all Twitch mining** — Stream Loot
+  retries safely and can fall back to Twitch's Smart TV device authorization. The
+  one-time access token is encrypted for the current Windows user and never stored
+  in the repository or logs.
+- **False completed/account-link state caused by an empty dashboard response** —
+  integrity-error responses are no longer treated as valid campaign data.
+
 ## [1.1.3] — 2026-09-17
 
 Kick claim and continuation reliability fixes.
