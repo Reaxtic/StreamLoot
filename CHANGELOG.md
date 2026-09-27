@@ -3,6 +3,18 @@
 All notable changes to **Stream Loot** are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.1.9] — 2026-09-27
+
+Streamer rotation and Kick category verification fixes.
+
+### Fixed
+- **Delta Force could stop at a frozen percentage** — a stalled Twitch channel is
+  now quarantined without blacklisting the entire campaign, allowing immediate
+  rotation to another eligible streamer.
+- **General Kick campaigns such as World of Warcraft: Forever were rejected** —
+  the selected channel category is now verified using Kick's public channel API.
+  The fragile page element check is retained only as a fallback.
+
 ## [1.1.8] — 2026-09-27
 
 All pinned campaigns now have priority over automatic picks.

@@ -8,12 +8,17 @@ using Core.Logging;
 using Core.Models;
 using Core.Enums;
 using System.IO;
+using System.Net.Http;
 
 namespace Core.Managers
 {
     public sealed class DropsInventoryManager
     {
         private static readonly Lazy<DropsInventoryManager> _instance = new(() => new DropsInventoryManager());
+        private static readonly HttpClient _kickCategoryClient = new()
+        {
+            Timeout = TimeSpan.FromSeconds(8)
+        };
         public static DropsInventoryManager Instance => _instance.Value;
 
         public ObservableCollection<DropsCampaign> ActiveCampaigns { get; } = new ObservableCollection<DropsCampaign>();
@@ -2298,7 +2303,7 @@ namespace Core.Managers
                         // Channel-bound campaigns (specific participating channels, incl. "Football Drop") earn on
                         // that channel regardless of what it's currently streaming, so category is not required.
                         bool kickChannelBound = CampaignChannelLogins(bestKick).Count > 0;
-                        bool kickCorrectCategory = kickChannelBound || await IsKickStreamCategoryCorrect();
+                        bool kickCorrectCategory = kickChannelBound || await IsKickStreamCategoryCorrect(GetStreamerNameFromUrl(kickUrl));
 
                         // An explicit user pick (or a channel-bound campaign) is trusted on category, but must still
                         // be actually online to be worth watching.
@@ -3510,12 +3515,11 @@ namespace Core.Managers
                             }
                             _creditTracking[campaignId] = (serverMinutes, 0, DateTime.Now);
 
-                            // Kick campaigns commonly expose many interchangeable participating channels. A single
-                            // channel freezing after a claim must rotate to another channel, not blacklist the whole
-                            // campaign (which left Kick idle and prevented later rewards from progressing). Twitch
-                            // keeps the existing campaign-level fallback because its non-crediting state can also be
-                            // account/campaign specific.
-                            if (!pinned && (platform != Platform.Kick || string.IsNullOrWhiteSpace(currentLogin)))
+                            // When we know the channel, the failure is channel-scoped on BOTH platforms. Twitch
+                            // campaigns such as Delta Force expose hundreds of interchangeable eligible channels;
+                            // blacklisting the campaign here prevented the selector from reaching another one.
+                            // Use campaign-level quarantine only when there is no channel identity to rotate away.
+                            if (!pinned && string.IsNullOrWhiteSpace(currentLogin))
                                 _notCreditingCampaignIds.Add(campaignId);
                         }
                     }
@@ -3534,11 +3538,47 @@ namespace Core.Managers
         /// of the current Kick campaign. Returns <see langword="false"/> if the web view is not initialized.</remarks>
         /// <returns>A task that represents the asynchronous operation. The task result contains <see langword="true"/> if the
         /// Kick stream category matches the current campaign slug; otherwise, <see langword="false"/>.</returns>
-        private async Task<bool> IsKickStreamCategoryCorrect()
+        private async Task<bool> IsKickStreamCategoryCorrect(string? login = null)
         {
             if (KickWebView == null)
                 return false;
 
+            login ??= _currentKickLogin;
+            string expectedSlug = _currentKickCampaign?.Slug ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(expectedSlug))
+            {
+                string? categoryUrl = _currentKickCampaign?.ConnectUrls?
+                    .FirstOrDefault(url => url.Contains("/category/", StringComparison.OrdinalIgnoreCase));
+                if (Uri.TryCreate(categoryUrl, UriKind.Absolute, out Uri? categoryUri))
+                {
+                    string[] parts = categoryUri.AbsolutePath.Trim('/').Split('/');
+                    int categoryIndex = Array.FindIndex(parts, p => p.Equals("category", StringComparison.OrdinalIgnoreCase));
+                    if (categoryIndex >= 0 && categoryIndex + 1 < parts.Length)
+                        expectedSlug = parts[categoryIndex + 1];
+                }
+            }
+
+            AppLogger.Info("KickSelection", $"Kick category verification: channel={login ?? "<empty>"}, expected={expectedSlug}, campaign={_currentKickCampaign?.Name ?? "<none>"}");
+            if (!string.IsNullOrWhiteSpace(login) && !string.IsNullOrWhiteSpace(expectedSlug))
+            {
+                try
+                {
+                    string apiSlug = await FetchKickChannelCategorySlugViaApiAsync(login);
+                    if (!string.IsNullOrWhiteSpace(apiSlug))
+                    {
+                        bool apiMatch = string.Equals(apiSlug, expectedSlug, StringComparison.OrdinalIgnoreCase);
+                        AppLogger.Info("KickSelection", $"Kick API category check: channel={login}, actual={apiSlug}, expected={expectedSlug}, match={apiMatch}");
+                        return apiMatch;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn("KickSelection", $"Kick API category check failed for '{login}'; falling back to DOM. {ex.Message}");
+                }
+            }
+
+            // Last-resort fallback for a transient API failure. The DOM selector is intentionally not authoritative:
+            // Kick changes/lazy-loads this element and it falsely rejected valid general-drop streams.
             string js = @"
                 (() => {
                     const categoryElement = document.querySelector("".text-primary-base"");
@@ -3551,6 +3591,46 @@ namespace Core.Managers
 
             AppLogger.Debug("KickSelection", $"[DropsInventoryManager] Kick stream category correct status: {isCorrect}");
             return isCorrect;
+        }
+
+        private static async Task<string> FetchKickChannelCategorySlugViaApiAsync(string login)
+        {
+            using HttpRequestMessage request = new(
+                HttpMethod.Get,
+                $"https://kick.com/api/v2/channels/{Uri.EscapeDataString(login)}");
+            request.Headers.TryAddWithoutValidation("Accept", "application/json");
+            request.Headers.TryAddWithoutValidation("User-Agent", "StreamLoot/1.1.9");
+
+            using HttpResponseMessage response = await _kickCategoryClient.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                AppLogger.Warn("KickSelection", $"Kick category API returned HTTP {(int)response.StatusCode} for '{login}'.");
+                return string.Empty;
+            }
+
+            await using Stream body = await response.Content.ReadAsStreamAsync();
+            using JsonDocument json = await JsonDocument.ParseAsync(body);
+            if (json.RootElement.TryGetProperty("livestream", out JsonElement livestream)
+                && livestream.ValueKind == JsonValueKind.Object
+                && livestream.TryGetProperty("categories", out JsonElement categories))
+            {
+                if (categories.ValueKind == JsonValueKind.Object
+                    && categories.TryGetProperty("slug", out JsonElement objectSlug))
+                    return objectSlug.GetString() ?? string.Empty;
+
+                // Kick currently returns `categories` as an array, despite older payloads using an object.
+                if (categories.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (JsonElement category in categories.EnumerateArray())
+                        if (category.ValueKind == JsonValueKind.Object
+                            && category.TryGetProperty("slug", out JsonElement arraySlug)
+                            && !string.IsNullOrWhiteSpace(arraySlug.GetString()))
+                            return arraySlug.GetString()!;
+                }
+            }
+
+            AppLogger.Warn("KickSelection", $"Kick category API payload did not contain a category slug for '{login}'.");
+            return string.Empty;
         }
         /// <summary>
         /// Determines whether the Twitch stream is currently live by evaluating the status indicator in the embedded

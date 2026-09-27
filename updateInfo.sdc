@@ -1,8 +1,13 @@
 {
-  "version": "1.1.8",
+  "version": "1.1.9",
   "type": "Patch",
-  "changelog": "Stream Loot now checks every pinned Twitch campaign before choosing a non-pinned fallback, so an unavailable first pin can no longer hide another available pin behind it.",
+  "changelog": "Stalled Twitch channels now rotate without blacklisting the whole campaign, and general Kick campaigns verify their stream category through Kick's API instead of fragile page HTML.",
   "historic_versions": [
+    {
+      "version": "1.1.8",
+      "type": "Patch",
+      "changelog": "Stream Loot checks every pinned Twitch campaign before choosing a non-pinned fallback, so an unavailable first pin cannot hide another available pin behind it."
+    },
     {
       "version": "1.1.7",
       "type": "Patch",
