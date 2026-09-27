@@ -1937,12 +1937,15 @@ namespace Core.Managers
                         }
                     }
 
-                    // Pinned campaign handling: attempt 0 tries ONLY the pinned campaign. If none of its streamers
-                    // is live, the pin is temporarily SUSPENDED — attempt 1 falls back to the best other campaign so
-                    // no time is wasted idling — and the health check returns to the pin as soon as a pinned channel
-                    // goes live again.
-                    string? twitchPin = ActivePinFor(Platform.Twitch);
-                    bool twitchPinActive = !keepTwitch && twitchPin != null && twitchCampaigns.Any(c => c.Id == twitchPin);
+                    // Pinned campaign handling: attempt 0 walks ALL queued Twitch pins. An unavailable pin at the
+                    // front must not make an automatic campaign beat another pin that is live farther down the
+                    // queue. Only when no pinned campaign can be watched does attempt 1 consider non-pinned work.
+                    List<string> twitchPins = PinsFor(Platform.Twitch);
+                    string? twitchPin = twitchPins.FirstOrDefault();
+                    HashSet<string> activeTwitchPinIds = twitchPins
+                        .Where(id => twitchCampaigns.Any(c => c.Id == id))
+                        .ToHashSet(StringComparer.Ordinal);
+                    bool twitchPinActive = !keepTwitch && activeTwitchPinIds.Count != 0;
                     // Do not use _currentTwitchCampaign to decide whether THIS pass selected anything. It may still
                     // contain the stream watched before a newly pinned/offline campaign was tried. Treating that
                     // stale value as success skipped the suspension branch, so the miner retried the dead pin every
@@ -1954,9 +1957,13 @@ namespace Core.Managers
                     if (keepTwitch)
                         remainingTwitchCampaigns = new List<DropsCampaign>();
                     else if (twitchPinActive && !_twitchPinSuspended)
-                        remainingTwitchCampaigns = twitchCampaigns.Where(c => c.Id == twitchPin).ToList();
+                        remainingTwitchCampaigns = twitchPins
+                            .Select(id => twitchCampaigns.FirstOrDefault(c => c.Id == id))
+                            .Where(c => c != null)
+                            .Cast<DropsCampaign>()
+                            .ToList();
                     else if (twitchPinActive)
-                        remainingTwitchCampaigns = twitchCampaigns.Where(c => c.Id != twitchPin).ToList();
+                        remainingTwitchCampaigns = twitchCampaigns.Where(c => !activeTwitchPinIds.Contains(c.Id)).ToList();
                     else
                         remainingTwitchCampaigns = [.. twitchCampaigns];
 
@@ -2103,7 +2110,7 @@ namespace Core.Managers
                     // and retry with the other campaigns; the health check re-pins when someone goes live.
                     _twitchPinSuspended = true;
                     _twitchPinSuspendedAt = DateTime.Now;
-                    AppLogger.Info("Selection", $"Pinned Twitch campaign {twitchPin} has no live streamers — temporarily mining other campaigns until one returns.");
+                    AppLogger.Info("Selection", $"No pinned Twitch campaign has a live streamer ({activeTwitchPinIds.Count} checked) — temporarily mining non-pinned campaigns until one returns.");
                     }
 
                     if (!twitchSelectedThisPass)

@@ -3,6 +3,16 @@
 All notable changes to **Stream Loot** are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.1.8] — 2026-09-27
+
+All pinned campaigns now have priority over automatic picks.
+
+### Fixed
+- **A normal Twitch campaign could be selected while another pinned campaign was
+  available** — Stream Loot now walks every queued Twitch pin first. It falls back
+  to a non-pinned campaign only after all active pins have been checked and none
+  has a live eligible streamer.
+
 ## [1.1.7] — 2026-09-27
 
 Pinned campaign fallback fix.

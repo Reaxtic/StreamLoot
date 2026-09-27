@@ -1,8 +1,13 @@
 {
-  "version": "1.1.7",
+  "version": "1.1.8",
   "type": "Patch",
-  "changelog": "An unavailable pinned Twitch campaign is now suspended correctly, allowing Stream Loot to mine another available campaign and return to the pin when a streamer comes online.",
+  "changelog": "Stream Loot now checks every pinned Twitch campaign before choosing a non-pinned fallback, so an unavailable first pin can no longer hide another available pin behind it.",
   "historic_versions": [
+    {
+      "version": "1.1.7",
+      "type": "Patch",
+      "changelog": "An unavailable pinned Twitch campaign is suspended correctly, allowing Stream Loot to mine another available campaign and return to the pin when a streamer comes online."
+    },
     {
       "version": "1.1.6",
       "type": "Patch",
