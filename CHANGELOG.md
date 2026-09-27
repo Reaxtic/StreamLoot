@@ -3,6 +3,18 @@
 All notable changes to **Stream Loot** are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.1.10] — 2026-09-27
+
+Finish-progress priority and visible Kick category channels.
+
+### Fixed
+- **The miner could start or continue a longer campaign while another reward was
+  closer to completion** — partially progressed rewards now take precedence, with
+  the fewest real minutes remaining selected first regardless of campaign type.
+- **General Kick campaigns only showed “Category drop”** — live channels discovered
+  in the category directory are now counted, shown in the card tooltip, and exposed
+  in the Dashboard streamer picker.
+
 ## [1.1.9] — 2026-09-27
 
 Streamer rotation and Kick category verification fixes.

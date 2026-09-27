@@ -1,8 +1,13 @@
 {
-  "version": "1.1.9",
+  "version": "1.1.10",
   "type": "Patch",
-  "changelog": "Stalled Twitch channels now rotate without blacklisting the whole campaign, and general Kick campaigns verify their stream category through Kick's API instead of fragile page HTML.",
+  "changelog": "Started rewards are now finished in order of the fewest real minutes remaining, and general Kick category campaigns show discovered live channels with a selectable streamer list.",
   "historic_versions": [
+    {
+      "version": "1.1.9",
+      "type": "Patch",
+      "changelog": "Stalled Twitch channels now rotate without blacklisting the whole campaign, and general Kick campaigns verify their stream category through Kick's API instead of fragile page HTML."
+    },
     {
       "version": "1.1.8",
       "type": "Patch",

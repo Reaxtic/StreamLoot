@@ -90,6 +90,8 @@ namespace Core.Managers
         private readonly object _lastStreamerSync = new();
         private readonly Dictionary<string, string> _lastTwitchStreamers = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _lastKickStreamers = new(StringComparer.OrdinalIgnoreCase);
+        private readonly object _kickCategoryChannelsSync = new();
+        private readonly Dictionary<string, List<string>> _kickCategoryChannels = new(StringComparer.Ordinal);
 
         // Manual user overrides.
         private string? _forcedCampaignId; // when set, selection mines this campaign instead of auto-picking
@@ -808,7 +810,12 @@ namespace Core.Managers
         private static DropsCampaign MergeCampaignProgress(DropsCampaign fresh, DropsCampaign previous)
         {
             // Availability is computed client-side (not part of the server snapshot), so carry it across reloads.
-            fresh = fresh with { Availability = previous.Availability, OnlineChannels = previous.OnlineChannels };
+            fresh = fresh with
+            {
+                Availability = previous.Availability,
+                OnlineChannels = previous.OnlineChannels,
+                OnlineChannelNames = previous.OnlineChannelNames
+            };
 
             bool freshHasData = fresh.Rewards.Any(r => r.ProgressMinutes > 0 || r.IsClaimed);
             if (freshHasData)
@@ -1202,7 +1209,18 @@ namespace Core.Managers
                 }
             }
 
-            // Kick: participating channels, with live/online status (and viewer count) from Kick's channel API.
+            // Kick category campaigns do not contain channel URLs in the drops payload. Use the live channels
+            // discovered from their category directory so the picker can still show actual streamer names.
+            if (logins.Count == 0)
+            {
+                lock (_kickCategoryChannelsSync)
+                {
+                    if (_kickCategoryChannels.TryGetValue(campaign.Id, out List<string>? discovered))
+                        logins = discovered.ToList();
+                }
+            }
+
+            // Kick: participating/discovered channels, with live status and viewer count from Kick's channel API.
             List<string> kickSlugs = logins.Take(30).ToList();
             if (kickSlugs.Count == 0)
                 return Array.Empty<ChannelCandidate>();
@@ -1237,6 +1255,42 @@ namespace Core.Managers
                 .OrderByDescending(c => c.Online)
                 .ThenByDescending(c => c.Viewers)
                 .ToList();
+        }
+
+        private void RememberKickCategoryChannels(DropsCampaign campaign, IEnumerable<string> channelUrls)
+        {
+            List<string> logins = channelUrls
+                .Where(IsRealChannelUrl)
+                .Select(GetStreamerNameFromUrl)
+                .Where(login => !string.IsNullOrWhiteSpace(login))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(30)
+                .ToList();
+
+            if (logins.Count == 0)
+                return;
+
+            lock (_kickCategoryChannelsSync)
+                _kickCategoryChannels[campaign.Id] = logins;
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                int index = ActiveCampaigns.ToList().FindIndex(c => c.Id == campaign.Id);
+                if (index < 0)
+                    return;
+
+                DropsCampaign updated = ActiveCampaigns[index] with
+                {
+                    Availability = CampaignAvailability.Available,
+                    OnlineChannels = logins.Count,
+                    OnlineChannelNames = logins
+                };
+                ActiveCampaigns[index] = updated;
+                if (_currentKickCampaign?.Id == updated.Id)
+                    _currentKickCampaign = updated;
+            });
+
+            AppLogger.Info("Availability", $"Discovered {logins.Count} live Kick category channel(s) for '{campaign.Name}': {string.Join(", ", logins)}");
         }
 
         private static bool IsRealChannelUrl(string url)
@@ -1300,6 +1354,18 @@ namespace Core.Managers
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
+        private List<string> KickAvailabilityLogins(DropsCampaign campaign)
+        {
+            List<string> listed = CampaignChannelLogins(campaign);
+            if (listed.Count != 0)
+                return listed;
+
+            lock (_kickCategoryChannelsSync)
+                return _kickCategoryChannels.TryGetValue(campaign.Id, out List<string>? discovered)
+                    ? discovered.ToList()
+                    : new List<string>();
+        }
+
         /// <summary>
         /// Computes, for every active campaign, whether watchable streamers are currently live (so the Inventory
         /// can mark availability). General/category drops are marked <see cref="CampaignAvailability.Category"/>
@@ -1324,7 +1390,7 @@ namespace Core.Managers
                 Dictionary<string, int> kickStatus = new(StringComparer.OrdinalIgnoreCase);
                 List<string> kickSlugs = snapshot
                     .Where(c => c.Platform == Platform.Kick)
-                    .SelectMany(CampaignChannelLogins) // empty for true category drops; non-empty even if flagged "general"
+                    .SelectMany(KickAvailabilityLogins)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .Take(60)
                     .ToList();
@@ -1377,7 +1443,18 @@ namespace Core.Managers
 
                     if (chans.Count == 0)
                     {
-                        lock (result) result[c.Id] = (CampaignAvailability.Category, 0);
+                        if (c.Platform == Platform.Kick)
+                        {
+                            List<string> discovered = KickAvailabilityLogins(c);
+                            int online = discovered.Count(ch => kickStatus.TryGetValue(ch, out int v) && v >= 0);
+                            lock (result) result[c.Id] = online > 0
+                                ? (CampaignAvailability.Available, online)
+                                : (CampaignAvailability.Category, 0);
+                        }
+                        else
+                        {
+                            lock (result) result[c.Id] = (CampaignAvailability.Category, 0);
+                        }
                         // For true Twitch general drops, try to upgrade to a live count from the game directory.
                         if (c.Platform == Platform.Twitch && _twitchGqlService != null && !string.IsNullOrWhiteSpace(c.Slug))
                             twitchGeneralToCheck.Add(c);
@@ -2849,17 +2926,20 @@ namespace Core.Managers
                 }
             }
 
-            // Finish-line override: a campaign within 30 minutes of unlocking its next drop is finished FIRST
-            // (least remaining minutes wins), regardless of the channel-specific-before-general bias below.
-            // Without this, the miner kept starting fresh campaigns while e.g. a 179/180 drop sat one minute
-            // from completion.
+            // Finish started work before opening another reward. Among campaigns with a partially progressed
+            // reward, the one with the fewest REAL minutes to its next reward always wins. This deliberately runs
+            // before the channel-specific/general bias and before the configured auto mode: a 1386/1500 category
+            // reward must beat a 1296/1500 channel reward, and neither should lose to a brand-new short drop.
             DropsCampaign? nearlyDone = campaigns
-                .Where(c => c.NextDropEtaMinutes <= 30)
+                .Where(c => c.Rewards.Any(r => !r.IsClaimed
+                    && r.ProgressMinutes > 0
+                    && r.ProgressMinutes < r.RequiredMinutes))
                 .OrderBy(c => c.NextDropEtaMinutes)
+                .ThenBy(c => c.EndsAt)
                 .FirstOrDefault();
             if (nearlyDone != null)
             {
-                AppLogger.Info("Selection", $"Finish-line priority: '{nearlyDone.Name}' is {nearlyDone.NextDropEtaMinutes} min from its next drop — finishing it first.");
+                AppLogger.Info("Selection", $"In-progress priority: '{nearlyDone.Name}' is {nearlyDone.NextDropEtaMinutes} min from its next drop — finishing started progress first.");
                 return Task.FromResult<DropsCampaign?>(nearlyDone);
             }
 
@@ -3934,6 +4014,34 @@ namespace Core.Managers
                         await KickWebView!.NavigateAsync(directoryUrl));
 
                     await Task.Delay(1500);  // Again - consider WaitForNetworkIdleAsync if needed
+
+                    // Keep every live channel exposed by the category directory, not only the first card. This
+                    // powers the Dashboard picker and the Inventory availability tooltip for general Kick drops.
+                    string categoryChannelsRaw = await await Application.Current.Dispatcher.InvokeAsync(async () =>
+                        await KickWebView!.ExecuteScriptAsync(@"
+                            (() => {
+                                const reserved = new Set(['category','browse','directory','search','videos','clips','following','subscriptions','settings','drops','u','popout']);
+                                const urls = Array.from(document.querySelectorAll('section a[href]'))
+                                    .map(a => a.href)
+                                    .filter(href => {
+                                        try {
+                                            const u = new URL(href);
+                                            const parts = u.pathname.split('/').filter(Boolean);
+                                            return u.hostname.endsWith('kick.com') && parts.length === 1 && !reserved.has(parts[0].toLowerCase());
+                                        } catch { return false; }
+                                    });
+                                return Array.from(new Set(urls)).slice(0, 30);
+                            })();"));
+                    try
+                    {
+                        List<string>? categoryChannels = JsonSerializer.Deserialize<List<string>>(categoryChannelsRaw);
+                        if (categoryChannels != null)
+                            RememberKickCategoryChannels(campaign, categoryChannels);
+                    }
+                    catch (JsonException ex)
+                    {
+                        AppLogger.Warn("KickSelection", $"Could not parse category channel list for '{campaign.Name}': {ex.Message}");
+                    }
 
                     string firstStreamerRawResult = await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.ExecuteScriptAsync(getFirstStreamerFromDirectoryJs));
 

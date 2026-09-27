@@ -86,7 +86,8 @@ namespace Core.Models
         int OnlineChannels = 0,
         bool IsPinned = false,
         bool IsStalled = false,
-        int PinOrder = 0)
+        int PinOrder = 0,
+        IReadOnlyList<string>? OnlineChannelNames = null)
     {
         /// <summary>
         /// True when at least one reward is fully watched but still unclaimed. This does not imply an account-link
@@ -113,5 +114,10 @@ namespace Core.Models
                 return eta >= 60 ? $"⏱ ~{eta / 60}h {eta % 60}m" : $"⏱ ~{eta}m";
             }
         }
+
+        /// <summary>Names of live channels discovered for a category campaign, suitable for a compact tooltip.</summary>
+        public string OnlineChannelSummary => OnlineChannelNames == null || OnlineChannelNames.Count == 0
+            ? string.Empty
+            : string.Join(", ", OnlineChannelNames);
     }
 }

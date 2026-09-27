@@ -157,7 +157,8 @@
                                         </Border>
 
                                         <!-- Availability badge -->
-                                        <Border CornerRadius="6" Padding="10,4" Margin="8,0,0,0" VerticalAlignment="Center">
+                                        <Border CornerRadius="6" Padding="10,4" Margin="8,0,0,0" VerticalAlignment="Center"
+                                                ToolTip="{Binding OnlineChannelSummary}">
                                             <Border.Style>
                                                 <Style TargetType="Border">
                                                     <Setter Property="Background" Value="#33888888"/>
