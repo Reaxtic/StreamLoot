@@ -1943,6 +1943,11 @@ namespace Core.Managers
                     // goes live again.
                     string? twitchPin = ActivePinFor(Platform.Twitch);
                     bool twitchPinActive = !keepTwitch && twitchPin != null && twitchCampaigns.Any(c => c.Id == twitchPin);
+                    // Do not use _currentTwitchCampaign to decide whether THIS pass selected anything. It may still
+                    // contain the stream watched before a newly pinned/offline campaign was tried. Treating that
+                    // stale value as success skipped the suspension branch, so the miner retried the dead pin every
+                    // health tick and never reached an available fallback campaign.
+                    bool twitchSelectedThisPass = keepTwitch;
                     for (int selectionAttempt = 0; selectionAttempt < 2; selectionAttempt++)
                     {
                     List<DropsCampaign> remainingTwitchCampaigns;
@@ -2036,6 +2041,7 @@ namespace Core.Managers
                         _cachedTwitchEligible = true; // just confirmed eligible via GQL — seed the throttle cache
                         _lastTwitchEligibilityCheck = DateTime.Now;
                         UpdateCurrentSelectionFlags();
+                        twitchSelectedThisPass = true;
 
                         // Sync baseline NOW - right after selection, before any further logic
                         _twitchWatchedSeconds = bestTwitch.Rewards
@@ -2090,7 +2096,7 @@ namespace Core.Managers
                     }
 
                     // Selected, or nothing to fall back to — leave the attempt loop.
-                    if (_currentTwitchCampaign != null || !twitchPinActive || _twitchPinSuspended)
+                    if (twitchSelectedThisPass || !twitchPinActive || _twitchPinSuspended)
                         break;
 
                     // The pinned campaign produced no watchable stream (its streamers are offline) — suspend the pin
@@ -2100,8 +2106,12 @@ namespace Core.Managers
                     AppLogger.Info("Selection", $"Pinned Twitch campaign {twitchPin} has no live streamers — temporarily mining other campaigns until one returns.");
                     }
 
-                    if (_currentTwitchCampaign == null)
+                    if (!twitchSelectedThisPass)
                     {
+                        _currentTwitchCampaign = null;
+                        _currentTwitchLogin = null;
+                        _twitchCurrentlyOnline = false;
+                        UpdateCurrentSelectionFlags();
                         AppLogger.Warn("TwitchSelection", $"No Twitch campaign passed eligibility checks. candidates={twitchCampaigns.Count}");
                         // With quiet re-evaluations the card keeps showing the previous selection during the check,
                         // so blank it explicitly now that Twitch genuinely ended with nothing to watch.

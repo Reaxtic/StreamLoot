@@ -3,6 +3,17 @@
 All notable changes to **Stream Loot** are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.1.7] — 2026-09-27
+
+Pinned campaign fallback fix.
+
+### Fixed
+- **An unavailable pinned Twitch campaign could block all available campaigns** —
+  selection now distinguishes a stream chosen during the current pass from the
+  stale stream watched before the pin changed. Pins with no live streamer are
+  suspended, an available fallback is mined, and the pin is resumed when one of
+  its streamers comes back online.
+
 ## [1.1.6] — 2026-09-27
 
 Pinned Twitch campaign selection reliability.

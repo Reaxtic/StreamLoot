@@ -1,8 +1,13 @@
 {
-  "version": "1.1.6",
+  "version": "1.1.7",
   "type": "Patch",
-  "changelog": "Pinned Twitch channels are now verified through Twitch GQL whenever the player page does not expose its category, preventing valid pins from being ignored until a later refresh.",
+  "changelog": "An unavailable pinned Twitch campaign is now suspended correctly, allowing Stream Loot to mine another available campaign and return to the pin when a streamer comes online.",
   "historic_versions": [
+    {
+      "version": "1.1.6",
+      "type": "Patch",
+      "changelog": "Pinned Twitch channels are verified through Twitch GQL whenever the player page does not expose its category, preventing valid pins from being ignored until a later refresh."
+    },
     {
       "version": "1.1.5",
       "type": "Patch",
