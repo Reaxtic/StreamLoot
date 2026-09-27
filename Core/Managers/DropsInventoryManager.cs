@@ -4004,7 +4004,21 @@ namespace Core.Managers
                             break;
                         }
 
-                        AppLogger.Warn("TwitchSelection", $"Twitch URL category mismatch for campaign '{campaign.Name}'. url='{connectUrl}', categoryHrefs='{categoryHrefResult.Trim().Trim('"')}', slug='{campaign.Slug}'");
+                        // Twitch's directory/player DOM is loaded lazily and sometimes contains no category link
+                        // even though the channel is live in the correct game. This was especially visible for
+                        // pinned campaigns with only one ConnectUrl: the valid channel was rejected and the pin
+                        // appeared to do nothing until a later retry happened to see the link. Confirm a DOM miss
+                        // with the authoritative GQL check before discarding the channel.
+                        string connectLogin = GetStreamerNameFromUrl(connectUrl);
+                        bool? gqlEligible = await IsTwitchStreamEligibleViaGqlAsync(connectLogin, campaign.Slug);
+                        if (gqlEligible == true)
+                        {
+                            streamerUrl = connectUrl;
+                            AppLogger.Info("TwitchSelection", $"Twitch channel accepted by GQL after an inconclusive DOM category check for campaign '{campaign.Name}': {connectUrl}");
+                            break;
+                        }
+
+                        AppLogger.Warn("TwitchSelection", $"Twitch URL category mismatch for campaign '{campaign.Name}'. url='{connectUrl}', categoryHrefs='{categoryHrefResult.Trim().Trim('"')}', slug='{campaign.Slug}', gqlEligible={gqlEligible?.ToString() ?? "unknown"}");
                     }
                 }
             }

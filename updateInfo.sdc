@@ -1,8 +1,13 @@
 {
-  "version": "1.1.5",
+  "version": "1.1.6",
   "type": "Patch",
-  "changelog": "Twitch reliability: dashboard responses are read only after download completion, integrity-error bodies are rejected, and a secure Smart TV device authorization fallback is available when browser tokens keep failing.",
+  "changelog": "Pinned Twitch channels are now verified through Twitch GQL whenever the player page does not expose its category, preventing valid pins from being ignored until a later refresh.",
   "historic_versions": [
+    {
+      "version": "1.1.5",
+      "type": "Patch",
+      "changelog": "Twitch reliability: dashboard responses are read only after download completion, integrity-error bodies are rejected, and a secure Smart TV device authorization fallback is available when browser tokens keep failing."
+    },
     {
       "version": "1.1.4",
       "type": "Patch",

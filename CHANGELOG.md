@@ -3,6 +3,19 @@
 All notable changes to **Stream Loot** are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.1.6] — 2026-09-27
+
+Pinned Twitch campaign selection reliability.
+
+### Fixed
+- **A pinned Twitch campaign could be ignored for several minutes** — when Twitch's
+  lazily loaded player page does not expose its category link, Stream Loot now
+  verifies the channel through Twitch GQL before rejecting it. A valid pinned
+  channel starts immediately instead of waiting for a lucky later refresh.
+- **Restart expectations are now diagnosable** — shutdown caused by a Windows
+  session ending remains recorded separately from an application crash. Enabling
+  “Start with Windows” restores mining automatically after the next sign-in.
+
 ## [1.1.5] — 2026-09-25
 
 Twitch campaign loading and fallback authentication fixes, built from the stable
