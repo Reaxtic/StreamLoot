@@ -1187,19 +1187,9 @@ namespace Core.Managers
                             .ToList();
                     }
 
-                    // Prefer the variant that also returns viewer counts; fall back to the login-only query
-                    // (shown as a green dot without a number) if the raw query yields nothing.
-                    List<(string Login, int Viewers)> liveWithViewers = await _twitchGqlService.QueryLiveChannelsWithViewersBySlugAsync(logins, campaign.Slug);
-                    if (liveWithViewers.Count != 0)
-                    {
-                        return liveWithViewers
-                            .Select(d => new ChannelCandidate(d.Login, $"https://www.twitch.tv/{d.Login}", true, d.Viewers))
-                            .ToList();
-                    }
-
-                    List<string> live = await _twitchGqlService.QueryLiveChannelsBySlugAsync(logins, campaign.Slug);
+                    List<(string Login, int Viewers)> live = await QueryDropsEnabledTwitchChannelsAsync(logins, campaign.Slug);
                     return live
-                        .Select(l => new ChannelCandidate(l, $"https://www.twitch.tv/{l}", true))
+                        .Select(d => new ChannelCandidate(d.Login, $"https://www.twitch.tv/{d.Login}", true, d.Viewers))
                         .ToList();
                 }
                 catch (Exception ex)
@@ -1483,8 +1473,8 @@ namespace Core.Managers
                         await gate.WaitAsync();
                         try
                         {
-                            List<(string Login, int Viewers)> live = await _twitchGqlService!
-                                .QueryLiveChannelsWithViewersBySlugAsync(CampaignChannelLogins(c).Take(30).ToList(), c.Slug);
+                            List<(string Login, int Viewers)> live = await QueryDropsEnabledTwitchChannelsAsync(
+                                CampaignChannelLogins(c).Take(60).ToList(), c.Slug);
                             lock (result) result[c.Id] = (live.Count > 0 ? CampaignAvailability.Available : CampaignAvailability.Unavailable, live.Count);
                         }
                         catch (Exception ex)
@@ -3492,7 +3482,8 @@ namespace Core.Managers
                         return false;
                     if (logins.Count > 0)
                     {
-                        List<string> live = await _twitchGqlService.QueryLiveChannelsBySlugAsync(logins.Take(40).ToList(), campaign.Slug);
+                        List<(string Login, int Viewers)> live = await QueryDropsEnabledTwitchChannelsAsync(
+                            logins.Take(60).ToList(), campaign.Slug);
                         return live.Count > 0;
                     }
                     List<(string Login, int Viewers)> dir = await _twitchGqlService.QueryLiveDirectoryChannelsAsync(campaign.Slug, 5);
@@ -3758,9 +3749,9 @@ namespace Core.Managers
 
             try
             {
-                List<string> liveMatches = await _twitchGqlService.QueryLiveChannelsBySlugAsync(new[] { login }, slug);
-                bool eligible = liveMatches.Any(l => string.Equals(l, login, StringComparison.OrdinalIgnoreCase));
-                AppLogger.Debug("TwitchSelection", $"[GQL eligibility] login={login}, slug={slug} -> {eligible}");
+                List<(string Login, int Viewers)> liveMatches = await QueryDropsEnabledTwitchChannelsAsync(new[] { login }, slug);
+                bool eligible = liveMatches.Any(l => string.Equals(l.Login, login, StringComparison.OrdinalIgnoreCase));
+                AppLogger.Info("TwitchSelection", $"[Drops-enabled eligibility] login={login}, slug={slug} -> {eligible}");
                 return eligible;
             }
             catch (Exception ex)
@@ -3768,6 +3759,29 @@ namespace Core.Managers
                 AppLogger.Warn("TwitchSelection", $"GQL eligibility check failed for '{login}' (slug={slug}); falling back to DOM. {ex.Message}");
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Intersects campaign channels with Twitch's server-side DROPS_ENABLED game directory. Merely being live
+        /// in the correct category is insufficient: a creator can stream the game without enabling the campaign,
+        /// in which case minute-watched heartbeats are accepted but reward progress never moves.
+        /// </summary>
+        private async Task<List<(string Login, int Viewers)>> QueryDropsEnabledTwitchChannelsAsync(
+            IReadOnlyCollection<string> campaignLogins,
+            string gameSlug)
+        {
+            if (_twitchGqlService == null || campaignLogins.Count == 0 || string.IsNullOrWhiteSpace(gameSlug))
+                return new List<(string Login, int Viewers)>();
+
+            HashSet<string> allowed = campaignLogins.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            List<(string Login, int Viewers)> directory = await _twitchGqlService
+                .QueryLiveDirectoryChannelsAsync(gameSlug, 60);
+
+            List<(string Login, int Viewers)> matches = directory
+                .Where(channel => allowed.Contains(channel.Login))
+                .ToList();
+            AppLogger.Info("TwitchSelection", $"Drops-enabled intersection: slug={gameSlug}, campaignChannels={allowed.Count}, directory={directory.Count}, matches={matches.Count}.");
+            return matches;
         }
 
         private async Task<bool> IsTwitchStreamOnline()
@@ -4166,7 +4180,9 @@ namespace Core.Managers
                         .Where(l => !string.IsNullOrWhiteSpace(l))
                         .ToList();
 
-                    List<string> liveLogins = await _twitchGqlService!.QueryLiveChannelsBySlugAsync(loginNames, campaign.Slug);
+                    List<string> liveLogins = (await QueryDropsEnabledTwitchChannelsAsync(loginNames, campaign.Slug))
+                        .Select(channel => channel.Login)
+                        .ToList();
 
                     // Honour user "skip streamer" requests; wrap around (clear) if everyone got skipped.
                     liveLogins = FilterSkippedLogins(Platform.Twitch, liveLogins);
@@ -4178,12 +4194,12 @@ namespace Core.Managers
                     }
                     else
                     {
-                        // QueryLiveChannelsBySlug already guarantees each login is live AND in the
-                        // correct category (server-side), so accept the first one directly instead of
+                        // The drops-enabled directory intersection guarantees each login is live, in the
+                        // correct category, and currently offering drops, so accept the first one instead of
                         // navigating and re-checking via fragile DOM scraping (which rejected valid streamers).
                         string acceptedLogin = liveLogins[0];
                         streamerUrl = $"https://www.twitch.tv/{acceptedLogin}";
-                        AppLogger.Info("TwitchSelection", $"Batch GQL streamer accepted for campaign '{campaign.Name}': {streamerUrl} (live+category confirmed via GQL; {liveLogins.Count} candidates).");
+                        AppLogger.Info("TwitchSelection", $"Drops-enabled streamer accepted for campaign '{campaign.Name}': {streamerUrl} ({liveLogins.Count} candidates).");
                     }
                 }
                 else

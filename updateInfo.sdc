@@ -1,8 +1,13 @@
 {
-  "version": "1.1.10",
+  "version": "1.1.11",
   "type": "Patch",
-  "changelog": "Started rewards are now finished in order of the fewest real minutes remaining, and general Kick category campaigns show discovered live channels with a selectable streamer list.",
+  "changelog": "Twitch channels must now be live, in the correct category, and present in Twitch's DROPS_ENABLED directory before Stream Loot watches them.",
   "historic_versions": [
+    {
+      "version": "1.1.10",
+      "type": "Patch",
+      "changelog": "Started rewards are now finished in order of the fewest real minutes remaining, and general Kick category campaigns show discovered live channels with a selectable streamer list."
+    },
     {
       "version": "1.1.9",
       "type": "Patch",

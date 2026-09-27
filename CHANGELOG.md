@@ -3,6 +3,16 @@
 All notable changes to **Stream Loot** are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.1.11] — 2026-09-27
+
+Strict Twitch drops-enabled channel verification.
+
+### Fixed
+- **A channel streaming the correct game could be watched even without active
+  drops** — channel selection, pin resumption, availability badges, health checks,
+  and the channel picker now require membership in Twitch's server-side
+  `DROPS_ENABLED` directory. A live category match alone is no longer accepted.
+
 ## [1.1.10] — 2026-09-27
 
 Finish-progress priority and visible Kick category channels.
