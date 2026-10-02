@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Core.Logging;
 using System.IO;
+using Core.Models;
+using System.Globalization;
 
 namespace Core.Managers
 {
@@ -33,6 +35,44 @@ namespace Core.Managers
         public bool IsClaimed(string campaignId, string rewardId)
         {
             lock (_sync) return _claimed.Contains(Key(campaignId, rewardId));
+        }
+
+        public bool IsClaimed(DropsCampaign campaign, DropsReward reward)
+        {
+            lock (_sync)
+            {
+                if (_claimed.Contains(Key(campaign.Id, reward.Id))) return true;
+                if (campaign.Platform != Core.Enums.Platform.Twitch || string.IsNullOrEmpty(reward.DropInstanceId)) return false;
+                string prefix = "twitch-benefit|" + reward.DropInstanceId + "|";
+                return _claimed.Any(k => k.StartsWith(prefix, StringComparison.Ordinal)
+                    && DateTimeOffset.TryParse(k[prefix.Length..], CultureInfo.InvariantCulture, DateTimeStyles.None, out var awarded)
+                    && awarded >= campaign.StartsAt && awarded < campaign.EndsAt);
+            }
+        }
+
+        public void Add(DropsCampaign campaign, DropsReward reward, DateTimeOffset? awardedAt = null)
+        {
+            lock (_sync)
+            {
+                bool changed = _claimed.Add(Key(campaign.Id, reward.Id));
+                if (campaign.Platform == Core.Enums.Platform.Twitch && !string.IsNullOrEmpty(reward.DropInstanceId)
+                    && !IsClaimedBenefit(campaign, reward))
+                {
+                    // Benefit identity is only shared inside its award window, never by reward name.
+                    DateTimeOffset awarded = awardedAt ?? DateTimeOffset.UtcNow;
+                    if (awarded >= campaign.StartsAt && awarded < campaign.EndsAt)
+                        changed |= _claimed.Add("twitch-benefit|" + reward.DropInstanceId + "|" + awarded.ToString("O", CultureInfo.InvariantCulture));
+                }
+                if (changed) Save();
+            }
+        }
+
+        private bool IsClaimedBenefit(DropsCampaign campaign, DropsReward reward)
+        {
+            string prefix = "twitch-benefit|" + reward.DropInstanceId + "|";
+            return _claimed.Any(k => k.StartsWith(prefix, StringComparison.Ordinal)
+                && DateTimeOffset.TryParse(k[prefix.Length..], CultureInfo.InvariantCulture, DateTimeStyles.None, out var awarded)
+                && awarded >= campaign.StartsAt && awarded < campaign.EndsAt);
         }
 
         /// <summary>Records a claim. Persists immediately — losing this record means re-mining a finished drop.</summary>

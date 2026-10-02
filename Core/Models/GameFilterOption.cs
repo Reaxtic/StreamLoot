@@ -14,6 +14,19 @@ namespace Core.Models
     {
         private bool _isSelected;
         private bool _isExcluded;
+        private int _priorityOrder = int.MaxValue;
+        public int PriorityOrder
+        {
+            get => _priorityOrder;
+            set
+            {
+                if (_priorityOrder == value) return;
+                _priorityOrder = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(PriorityOrder)));
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(PriorityLabel)));
+            }
+        }
+        public string PriorityLabel => _priorityOrder == int.MaxValue ? "" : $"#{_priorityOrder + 1}";
 
         /// <summary>
         /// Occurs when a property value changes.
@@ -49,12 +62,6 @@ namespace Core.Models
                     return;
 
                 _isSelected = value;
-                if (value && _isExcluded)
-                {
-                    // "Mine this" and "Exclude" are mutually exclusive per game.
-                    _isExcluded = false;
-                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsExcluded)));
-                }
                 PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
             }
         }
@@ -72,11 +79,6 @@ namespace Core.Models
                     return;
 
                 _isExcluded = value;
-                if (value && _isSelected)
-                {
-                    _isSelected = false;
-                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
-                }
                 PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsExcluded)));
             }
         }

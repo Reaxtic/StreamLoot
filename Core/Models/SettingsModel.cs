@@ -18,6 +18,8 @@ namespace Core.Models
         public DateTime? LastUpdateCheck { get; set; }
         public MiningPriorityMode MiningPriorityMode { get; set; } = MiningPriorityMode.AvailabilityThenProgress;
         public List<string> TwitchGameWhitelistSlugs { get; set; } = new List<string>();
+        public double TwitchGameListHeight { get; set; } = 180;
+        public double KickGameListHeight { get; set; } = 180;
         public List<string> KickGameWhitelistSlugs { get; set; } = new List<string>();
         // When true, the selected games are EXCLUDED (mine everything else) instead of being an allow-list.
         public bool TwitchGameFilterExclude { get; set; }

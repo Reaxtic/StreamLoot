@@ -16,3 +16,10 @@
 *.userprefs
 
 # Build output is NOT committed — distribute via GitHub Releases instead.
+dist/
+*.exe.WebView2/
+Settings.json
+ClaimedDrops.json
+StreamSelection.json
+logs/
+*.token

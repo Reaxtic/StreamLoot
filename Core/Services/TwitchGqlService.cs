@@ -954,15 +954,17 @@ namespace Core.Services
             JsonNode? root = JsonNode.Parse(jsonText);
             JsonNode? result = root?[0];
 
+            string? status = result?["data"]?["claimDropRewards"]?["status"]?.GetValue<string>();
+            bool success = status is "ELIGIBLE_FOR_ALL" or "DROP_INSTANCE_ALREADY_CLAIMED";
             bool isConnected = result?["data"]?
                         ["claimDropRewards"]?
                         ["isUserAccountConnected"]?
                         .GetValue<bool>()
                   ?? false;
 
-            AppLogger.Info("TwitchGql", $"ClaimDrop completed. success={isConnected}");
+            AppLogger.Info("TwitchGql", $"ClaimDrop completed. status={status ?? "missing"}, success={success}, accountConnected={isConnected}");
 
-            return isConnected;
+            return success;
         }
         /// <summary>
         /// Queries the Twitch Drops dashboard and returns the full dashboard data as a JSON object.

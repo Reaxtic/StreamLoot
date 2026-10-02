@@ -3,6 +3,59 @@
 All notable changes to **Stream Loot** are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.1.18] — 2026-10-02
+
+- Twitch and Kick game lists can be resized independently by dragging the handle below each list. Heights are saved on drag completion and restored after restart.
+
+### Informacje o wydaniu
+
+Wersja 1.1.18 zawiera także zmiany z wersji 1.1.12–1.1.17, które nie były wcześniej opublikowane jako wydania GitHub:
+
+- Kampanie Twitch pozostają widoczne i mogą zbierać postęp bez połączonego konta gry. Możliwość odebrania lub dostarczenia nagrody zależy od zasad danej kampanii.
+- Wynik odbioru dropu jest ustalany na podstawie odpowiedzi Twitcha, niezależnie od flagi połączenia konta gry. Potwierdzone odbiory są zapisywane lokalnie i zachowywane po odświeżeniu oraz restarcie.
+- Wspólne nagrody są rozpoznawane po identyfikatorze korzyści i okresie kampanii, aby nie blokować przyszłych edycji z podobnymi nagrodami.
+- Sprawdzanie dostępności korzysta ze wspólnych zapytań dla tej samej gry, ma limity czasu i aktualizuje statusy kampanii stopniowo. Szybkie zmiany ustawień są łączone w jedną ponowną ocenę kopania.
+- Białą listę zastąpiły uporządkowane priorytety gier, osobne dla Twitcha i Kicka. Niedostępna gra nie blokuje kolejnych pozycji ani gier zapasowych; aplikacja okresowo sprawdza możliwość powrotu do wyższego priorytetu.
+- Zachowano wykluczenia gier i ręczne przypinanie kampanii. Wykluczenia mają pierwszeństwo, a dostępne przypięcia nadpisują automatyczne priorytety gier.
+- Dodano wyszukiwanie gier, ukrywanie wykluczonych oraz strzałki do zmiany kolejności. Poprawiono sortowanie list także po opóźnionej przebudowie przez koparkę.
+- Pod listami Twitch i Kick znajdują się uchwyty do niezależnej zmiany wysokości. Rozmiar jest zapisywany po zakończeniu przeciągania i przywracany po restarcie.
+- Uruchomienie aplikacji do zasobnika systemowego jest sygnalizowane powiadomieniem.
+
+Pełny opis rozwoju od wersji 1.1.0: [Historia zmian](https://github.com/Reaxtic/StreamLoot/blob/main/docs/HISTORIA_ZMIAN_PL.md).
+
+Paczka Windows x64 jest samodzielna i nie wymaga instalacji .NET. Nie zawiera profili przeglądarki, kont, lokalnych ustawień ani logów użytkownika. Aktualizacja nie zmienia wymagań Twitcha i Kicka dotyczących kwalifikujących się transmisji lub połączenia kont gry.
+
+## [1.1.17] — 2026-10-02
+
+- Assign game priority ranks before inserting rebuilt rows, preventing the delayed miner refresh from reverting the visible list to alphabetical order.
+
+## [1.1.16] — 2026-10-02
+
+- The game priority list refreshes after model updates and scrolls to its first item when priorities change, without requiring a search/filter reset.
+
+## [1.1.15] — 2026-10-02
+
+- Replaced the game allow-list with ordered mining preferences, adjustable with up/down arrows.
+- Lower-priority games and unlisted games remain available as fallback when preferred games have no eligible live channels.
+- Game exclusions are preserved and always override preferences. Manual campaign pins remain overrides.
+- Mining checks for returning higher-priority games every three minutes.
+
+## [1.1.14] — 2026-10-02
+
+- Twitch claim success now follows the server claim status, not the game-account linking flag.
+- Server-confirmed claimed drops are saved permanently and displayed as completed after refresh and restart.
+- Shared Twitch benefits are recognized within their award window so equivalent campaigns do not mine the same collected reward again.
+
+## [1.1.13] — 2026-10-02
+
+- Availability checks now reuse one Twitch directory request per game, time out safely, and update campaign badges progressively.
+- Changing several game exclusions no longer starts overlapping mining re-evaluations or resets visible progress and availability.
+- Minimized Windows startup now displays a notification confirming that Stream Loot is running in the system tray.
+
+## [1.1.12] — 2026-09-29
+
+- Twitch campaigns remain visible and mineable when the linked game account is missing; account linking is only required when Twitch requires it for claiming or delivery.
+
 ## [1.1.11] — 2026-09-27
 
 Strict Twitch drops-enabled channel verification.

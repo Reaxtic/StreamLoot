@@ -26,13 +26,15 @@ Stream Loot watches the right streams in the background, tracks every active dro
 - 👀 **See everything you earn** — live progress bars per campaign **and** per drop, plus an **"Also earning on this channel"** list that shows every other campaign filling up at the same time.
 - 🎯 **Manual control when you want it** — pin a campaign with **Mine this**, **switch streamer**, or set a **specific channel** (with a built‑in live/eligibility check).
 - 🟢 **Live status** — see at a glance whether the watched streamer is online, and which campaign is general vs. channel‑specific.
-- 🧹 **Game filter** — allow‑list **or** exclude‑list specific games, per platform.
+- 🧹 **Game priorities and exclusions** — order preferred games separately for Twitch and Kick, with automatic fallback to other available games. Explicit exclusions always take precedence.
 - 🪶 **Lightweight & quiet** — forces lowest stream quality, handles mature‑content gates, runs happily in the background or system tray.
 - 🎨 **Modern UI** — clean dark theme, cyan accent, rounded cards, responsive layout.
 
 ---
 
 ## 📸 Screenshots
+
+Full development history in Polish: [Historia zmian — 1.1.0–1.1.18](docs/HISTORIA_ZMIAN_PL.md).
 
 | Dashboard | Inventory |
 |---|---|
@@ -66,6 +68,14 @@ Stream Loot uses an embedded **WebView2** browser (the same engine as Edge) to l
 4. Reconciles real progress with the servers periodically and **claims** rewards the moment they're complete.
 
 Twitch and Kick are handled **independently** — finishing or switching on one platform never disrupts the other.
+
+### Mining preferences
+
+Excluded games are never selected, including pinned campaigns for those games. An available pinned campaign takes precedence over automatic game preferences. Otherwise, games are considered in the order configured in Settings: for example, Rust before AirMech. An unavailable preferred game does not block lower priorities or unlisted games. The miner checks for returning higher-priority games approximately every three minutes.
+
+Within the selected game priority, partially progressed rewards are preferred by the remaining time to the next drop. Twitch progress is reconciled with the server; a successful watch request is not itself proof that a minute was credited. Completed drops are tracked in a persistent local claim ledger.
+
+The game lists support search, hiding excluded games, ordering with up/down arrows, and independent height adjustment using the handle below each list. List heights are restored after restart.
 
 ---
 

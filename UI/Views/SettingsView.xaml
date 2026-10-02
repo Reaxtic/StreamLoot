@@ -10,6 +10,20 @@
              Background="{DynamicResource MainBackgroundBrush}">
 
     <UserControl.Resources>
+        <Style x:Key="GameListResizeGrip" TargetType="Thumb">
+            <Setter Property="Height" Value="16"/>
+            <Setter Property="Cursor" Value="SizeNS"/>
+            <Setter Property="ToolTip" Value="{loc:T Set.ResizeGameList}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Grid Background="Transparent">
+                            <Border Width="90" Height="4" CornerRadius="2" Background="{DynamicResource TextMutedBrush}" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
         <!-- MODERN CHECKBOX - NOW FULLY THEMED -->
         <Style x:Key="ModernCheckBoxStyle" TargetType="CheckBox">
             <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
@@ -373,22 +387,53 @@
 
                         <TextBlock Text="Twitch" Foreground="{DynamicResource TextPrimaryBrush}" FontWeight="SemiBold" Margin="0,0,0,6"/>
                         <TextBlock Text="{Binding TwitchWhitelistSummary}" Foreground="{DynamicResource TextMutedBrush}" Margin="0,0,0,8"/>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="280"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0"
+                                       Text="{loc:T Set.SearchGames}"
+                                       Foreground="{DynamicResource TextMutedBrush}"
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,8,0"/>
+                            <TextBox x:Name="TwitchGameSearchBox"
+                                     Grid.Column="1"
+                                     TextChanged="OnGameSearchTextChanged"
+                                     Background="{DynamicResource MainBackgroundBrush}"
+                                     Foreground="{DynamicResource TextPrimaryBrush}"
+                                     BorderBrush="{DynamicResource BorderBrush}"
+                                     CaretBrush="{DynamicResource TextPrimaryBrush}"
+                                     Padding="8,5"/>
+                            <CheckBox x:Name="HideExcludedTwitchCheckBox"
+                                      Grid.Column="3"
+                                      Content="{loc:T Set.HideExcluded}"
+                                      Checked="OnGameFilterVisibilityChanged"
+                                      Unchecked="OnGameFilterVisibilityChanged"
+                                      Style="{StaticResource ModernCheckBoxStyle}"
+                                      Margin="16,0,0,0"
+                                      VerticalAlignment="Center"/>
+                        </Grid>
                         <Border Background="{DynamicResource MainBackgroundBrush}"
                                 BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="1"
                                 CornerRadius="8"
                                 Padding="8"
                                 Margin="0,0,0,6">
-                            <ListBox ItemsSource="{Binding TwitchGameFilterOptions}"
+                            <ListBox x:Name="TwitchGameList" ItemsSource="{Binding TwitchGameFilterOptions}"
+                                     Height="{Binding TwitchGameListHeight}" MinHeight="100"
                                      BorderThickness="0"
                                      Background="Transparent"
                                      HorizontalContentAlignment="Stretch"
-                                     MaxHeight="180">
+                                     MaxHeight="900">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
                                         <Grid Margin="0,4,0,4">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
                                             <CheckBox Grid.Column="0"
@@ -396,7 +441,12 @@
                                                       IsChecked="{Binding IsSelected, Mode=TwoWay}"
                                                       Style="{StaticResource ModernCheckBoxStyle}"
                                                       ToolTip="{loc:T Set.AllowTip}"/>
-                                            <CheckBox Grid.Column="1"
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0">
+                                                <TextBlock Text="{Binding PriorityLabel}" VerticalAlignment="Center" Foreground="{DynamicResource TextPrimaryBrush}" Width="35"/>
+                                                <Button Content="↑" Click="OnPriorityUpClick" IsEnabled="{Binding IsSelected}" Padding="5,0" ToolTip="Wyższy priorytet"/>
+                                                <Button Content="↓" Click="OnPriorityDownClick" IsEnabled="{Binding IsSelected}" Padding="5,0" ToolTip="Niższy priorytet"/>
+                                            </StackPanel>
+                                            <CheckBox Grid.Column="2"
                                                       Content="{loc:T Set.Exclude}"
                                                       IsChecked="{Binding IsExcluded, Mode=TwoWay}"
                                                       Style="{StaticResource ModernCheckBoxStyle}"
@@ -408,10 +458,7 @@
                                 </ListBox.ItemTemplate>
                             </ListBox>
                         </Border>
-                        <CheckBox Content="{loc:T Set.ExcludeMode}"
-                                  IsChecked="{Binding TwitchGameFilterExclude, Mode=TwoWay}"
-                                  Style="{StaticResource ModernCheckBoxStyle}"
-                                  Margin="0,0,0,8"/>
+                        <Thumb Tag="Twitch" Style="{StaticResource GameListResizeGrip}" DragDelta="OnGameListResize" DragCompleted="OnGameListResizeCompleted" Margin="0,-6,0,4"/>
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
                             <Button Content="{loc:T Set.ClearTwitchWhitelist}"
                                     Style="{StaticResource AccentButtonStyle}"
@@ -424,22 +471,53 @@
 
                         <TextBlock Text="Kick" Foreground="{DynamicResource TextPrimaryBrush}" FontWeight="SemiBold" Margin="0,0,0,6"/>
                         <TextBlock Text="{Binding KickWhitelistSummary}" Foreground="{DynamicResource TextMutedBrush}" Margin="0,0,0,8"/>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="280"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0"
+                                       Text="{loc:T Set.SearchGames}"
+                                       Foreground="{DynamicResource TextMutedBrush}"
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,8,0"/>
+                            <TextBox x:Name="KickGameSearchBox"
+                                     Grid.Column="1"
+                                     TextChanged="OnGameSearchTextChanged"
+                                     Background="{DynamicResource MainBackgroundBrush}"
+                                     Foreground="{DynamicResource TextPrimaryBrush}"
+                                     BorderBrush="{DynamicResource BorderBrush}"
+                                     CaretBrush="{DynamicResource TextPrimaryBrush}"
+                                     Padding="8,5"/>
+                            <CheckBox x:Name="HideExcludedKickCheckBox"
+                                      Grid.Column="3"
+                                      Content="{loc:T Set.HideExcluded}"
+                                      Checked="OnGameFilterVisibilityChanged"
+                                      Unchecked="OnGameFilterVisibilityChanged"
+                                      Style="{StaticResource ModernCheckBoxStyle}"
+                                      Margin="16,0,0,0"
+                                      VerticalAlignment="Center"/>
+                        </Grid>
                         <Border Background="{DynamicResource MainBackgroundBrush}"
                                 BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="1"
                                 CornerRadius="8"
                                 Padding="8"
                                 Margin="0,0,0,6">
-                            <ListBox ItemsSource="{Binding KickGameFilterOptions}"
+                            <ListBox x:Name="KickGameList" ItemsSource="{Binding KickGameFilterOptions}"
+                                     Height="{Binding KickGameListHeight}" MinHeight="100"
                                      BorderThickness="0"
                                      Background="Transparent"
                                      HorizontalContentAlignment="Stretch"
-                                     MaxHeight="180">
+                                     MaxHeight="900">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
                                         <Grid Margin="0,4,0,4">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
                                             <CheckBox Grid.Column="0"
@@ -447,7 +525,12 @@
                                                       IsChecked="{Binding IsSelected, Mode=TwoWay}"
                                                       Style="{StaticResource ModernCheckBoxStyle}"
                                                       ToolTip="{loc:T Set.AllowTip}"/>
-                                            <CheckBox Grid.Column="1"
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0">
+                                                <TextBlock Text="{Binding PriorityLabel}" VerticalAlignment="Center" Foreground="{DynamicResource TextPrimaryBrush}" Width="35"/>
+                                                <Button Content="↑" Click="OnPriorityUpClick" IsEnabled="{Binding IsSelected}" Padding="5,0" ToolTip="Wyższy priorytet"/>
+                                                <Button Content="↓" Click="OnPriorityDownClick" IsEnabled="{Binding IsSelected}" Padding="5,0" ToolTip="Niższy priorytet"/>
+                                            </StackPanel>
+                                            <CheckBox Grid.Column="2"
                                                       Content="{loc:T Set.Exclude}"
                                                       IsChecked="{Binding IsExcluded, Mode=TwoWay}"
                                                       Style="{StaticResource ModernCheckBoxStyle}"
@@ -459,10 +542,7 @@
                                 </ListBox.ItemTemplate>
                             </ListBox>
                         </Border>
-                        <CheckBox Content="{loc:T Set.ExcludeMode}"
-                                  IsChecked="{Binding KickGameFilterExclude, Mode=TwoWay}"
-                                  Style="{StaticResource ModernCheckBoxStyle}"
-                                  Margin="0,0,0,8"/>
+                        <Thumb Tag="Kick" Style="{StaticResource GameListResizeGrip}" DragDelta="OnGameListResize" DragCompleted="OnGameListResizeCompleted" Margin="0,-6,0,4"/>
                         <StackPanel Orientation="Horizontal">
                             <Button Content="{loc:T Set.ClearKickWhitelist}"
                                     Style="{StaticResource AccentButtonStyle}"

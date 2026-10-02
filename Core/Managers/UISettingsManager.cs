@@ -51,6 +51,19 @@ namespace Core.Managers
         private bool _sleepWhenDone;
         private string _language = "en";
         private bool _firstRunCompleted;
+        private double _twitchGameListHeight = 180;
+        private double _kickGameListHeight = 180;
+        private static double LimitGameListHeight(double value) => double.IsFinite(value) ? Math.Clamp(value, 100, 900) : 180;
+        public double TwitchGameListHeight
+        {
+            get => _twitchGameListHeight;
+            set { _twitchGameListHeight = LimitGameListHeight(value); OnPropertyChanged(nameof(TwitchGameListHeight)); }
+        }
+        public double KickGameListHeight
+        {
+            get => _kickGameListHeight;
+            set { _kickGameListHeight = LimitGameListHeight(value); OnPropertyChanged(nameof(KickGameListHeight)); }
+        }
 
         public ObservableCollection<GameFilterOption> TwitchGameFilterOptions { get; } = new ObservableCollection<GameFilterOption>();
         public ObservableCollection<GameFilterOption> KickGameFilterOptions { get; } = new ObservableCollection<GameFilterOption>();
@@ -265,16 +278,14 @@ namespace Core.Managers
         /// </summary>
         public bool IsUpdateNotificationEnabled => UpdateFrequency != UpdateFrequency.Never;
 
-        public string TwitchWhitelistSummary => BuildSummary("Twitch", _twitchGameWhitelistSlugs, _twitchGameBlacklistSlugs, _twitchGameFilterExclude);
-        public string KickWhitelistSummary => BuildSummary("Kick", _kickGameWhitelistSlugs, _kickGameBlacklistSlugs, _kickGameFilterExclude);
+        public string TwitchWhitelistSummary => BuildSummary("Twitch", _twitchGameWhitelistSlugs, _twitchGameBlacklistSlugs);
+        public string KickWhitelistSummary => BuildSummary("Kick", _kickGameWhitelistSlugs, _kickGameBlacklistSlugs);
 
-        private static string BuildSummary(string platform, List<string> whitelist, List<string> blacklist, bool excludeMode)
+        private static string BuildSummary(string platform, List<string> whitelist, List<string> blacklist)
         {
             string allowPart = whitelist.Count == 0
                 ? $"All active {platform} games are allowed"
-                : excludeMode
-                    ? $"Excluding {whitelist.Count} {platform} game(s)"
-                    : $"{whitelist.Count} {platform} game(s) selected";
+                : $"{whitelist.Count} {platform} game(s) prioritized; other games are fallback";
             return blacklist.Count == 0 ? allowPart : $"{allowPart} • {blacklist.Count} blocked";
         }
 
@@ -426,6 +437,7 @@ namespace Core.Managers
             if (!File.Exists(_settingsFilePath))
                 return; // First run - use defaults
 
+            bool migratedLegacyExcludeMode = false;
             _isLoadingSettings = true;
             try
             {
@@ -440,6 +452,8 @@ namespace Core.Managers
                     UpdateFrequency = settings.UpdateFrequency;
                     AutoClaimRewards = settings.AutoClaimRewards;
                     MiningPriorityMode = settings.MiningPriorityMode;
+                    TwitchGameListHeight = settings.TwitchGameListHeight;
+                    KickGameListHeight = settings.KickGameListHeight;
                     NotifyOnReadyToClaim = settings.NotifyOnReadyToClaim;
                     NotifyOnAutoClaimed = settings.NotifyOnAutoClaimed;
                     VerboseDebugLogging = settings.VerboseDebugLogging;
@@ -449,9 +463,27 @@ namespace Core.Managers
                     _kickGameWhitelistSlugs = NormalizeWhitelist(settings.KickGameWhitelistSlugs);
                     _twitchGameBlacklistSlugs = NormalizeWhitelist(settings.TwitchGameBlacklistSlugs);
                     _kickGameBlacklistSlugs = NormalizeWhitelist(settings.KickGameBlacklistSlugs);
-                    // Set backing fields directly during load to avoid firing change/re-evaluation events.
-                    _twitchGameFilterExclude = settings.TwitchGameFilterExclude;
-                    _kickGameFilterExclude = settings.KickGameFilterExclude;
+
+                    // The old global "exclude selected" mode was ambiguous next to the per-game Exclude switch.
+                    // Preserve its effective behaviour by moving those selections to the explicit blacklist once,
+                    // then keep the remaining left-hand selections as a normal allow-list.
+                    if (settings.TwitchGameFilterExclude)
+                    {
+                        _twitchGameBlacklistSlugs = NormalizeWhitelist(_twitchGameBlacklistSlugs.Concat(_twitchGameWhitelistSlugs));
+                        _twitchGameWhitelistSlugs.Clear();
+                        migratedLegacyExcludeMode = true;
+                    }
+
+                    if (settings.KickGameFilterExclude)
+                    {
+                        _kickGameBlacklistSlugs = NormalizeWhitelist(_kickGameBlacklistSlugs.Concat(_kickGameWhitelistSlugs));
+                        _kickGameWhitelistSlugs.Clear();
+                        migratedLegacyExcludeMode = true;
+                    }
+
+                    // Backing fields stay false: the legacy mode is no longer exposed in the UI.
+                    _twitchGameFilterExclude = false;
+                    _kickGameFilterExclude = false;
                     _softwareRendering = settings.SoftwareRendering;
                     _sleepWhenDone = settings.SleepWhenDone;
                     _language = string.IsNullOrWhiteSpace(settings.Language) ? "en" : settings.Language!;
@@ -470,6 +502,12 @@ namespace Core.Managers
 
             OnPropertyChanged(nameof(TwitchWhitelistSummary));
             OnPropertyChanged(nameof(KickWhitelistSummary));
+
+            if (migratedLegacyExcludeMode)
+            {
+                AppLogger.Info("UISettings", "Migrated legacy game-filter exclude mode to explicit per-game exclusions.");
+                SaveSettings();
+            }
 
             UpdateStartupRegistry();
         }
@@ -493,6 +531,8 @@ namespace Core.Managers
                     UpdateFrequency = UpdateFrequency,
                     AutoClaimRewards = AutoClaimRewards,
                     MiningPriorityMode = MiningPriorityMode,
+                    TwitchGameListHeight = TwitchGameListHeight,
+                    KickGameListHeight = KickGameListHeight,
                     NotifyOnReadyToClaim = NotifyOnReadyToClaim,
                     NotifyOnAutoClaimed = NotifyOnAutoClaimed,
                     VerboseDebugLogging = VerboseDebugLogging,
@@ -680,7 +720,10 @@ namespace Core.Managers
             try
             {
                 foreach (GameFilterOption option in options)
+                {
                     option.IsSelected = false;
+                    option.PriorityOrder = int.MaxValue;
+                }
 
                 List<GameFilterOption> inactiveOptions = options
                     .Where(x => x.DisplayName.EndsWith(" (inactive)", StringComparison.OrdinalIgnoreCase))
@@ -717,20 +760,32 @@ namespace Core.Managers
             if (blacklist.Contains(campaignSlug, StringComparer.OrdinalIgnoreCase))
                 return false;
 
-            // No games selected => allow everything (regardless of mode).
-            if (whitelist.Count == 0)
-                return true;
+            return true; // A priority is a preference, not an allow-list.
+        }
 
-            string slug = campaignSlug;
-            bool inList = whitelist.Contains(slug, StringComparer.OrdinalIgnoreCase);
+        public int GamePriority(DropsCampaign campaign)
+        {
+            var list = campaign.Platform == Platform.Twitch ? _twitchGameWhitelistSlugs : _kickGameWhitelistSlugs;
+            int index = list.FindIndex(s => string.Equals(s, campaign.Slug?.Trim(), StringComparison.OrdinalIgnoreCase));
+            return index < 0 ? int.MaxValue : index;
+        }
 
-            bool excludeMode = campaign.Platform == Platform.Twitch
-                ? _twitchGameFilterExclude
-                : _kickGameFilterExclude;
+        private void RefreshPriorityRanks(Platform platform)
+        {
+            var list = platform == Platform.Twitch ? _twitchGameWhitelistSlugs : _kickGameWhitelistSlugs;
+            var options = platform == Platform.Twitch ? TwitchGameFilterOptions : KickGameFilterOptions;
+            foreach (var option in options) { int i = list.IndexOf(option.Slug); option.PriorityOrder = i < 0 ? int.MaxValue : i; }
+        }
 
-            // Exclude mode: allow everything EXCEPT the selected games.
-            // Allow mode: allow ONLY the selected games.
-            return excludeMode ? !inList : inList;
+        public void MoveGamePriority(GameFilterOption option, int direction)
+        {
+            var list = option.Platform == Platform.Twitch ? _twitchGameWhitelistSlugs : _kickGameWhitelistSlugs;
+            int index = list.IndexOf(option.Slug), next = index + direction;
+            if (index < 0 || next < 0 || next >= list.Count) return;
+            (list[index], list[next]) = (list[next], list[index]);
+            RefreshPriorityRanks(option.Platform);
+            Task.Run(SaveSettings);
+            GameWhitelistChanged?.Invoke(option.Platform);
         }
 
         private void RebuildOptionsCollection(
@@ -754,7 +809,12 @@ namespace Core.Managers
                     slug,
                     displayName,
                     whitelist.Contains(slug, StringComparer.OrdinalIgnoreCase),
-                    blacklist.Contains(slug, StringComparer.OrdinalIgnoreCase));
+                    blacklist.Contains(slug, StringComparer.OrdinalIgnoreCase))
+                {
+                    // CollectionView sorts on insertion. Assign the rank BEFORE adding the row, including
+                    // delayed miner rebuilds; changing it afterwards leaves a non-live view alphabetical.
+                    PriorityOrder = whitelist.IndexOf(slug) is var rank && rank >= 0 ? rank : int.MaxValue
+                };
 
                 option.PropertyChanged += OnGameFilterOptionPropertyChanged;
                 collection.Add(option);
@@ -770,11 +830,15 @@ namespace Core.Managers
                     platform,
                     slug,
                     $"{slug} (inactive)",
-                    true);
+                    true)
+                {
+                    PriorityOrder = whitelist.IndexOf(slug)
+                };
 
                 option.PropertyChanged += OnGameFilterOptionPropertyChanged;
                 collection.Add(option);
             }
+            RefreshPriorityRanks(platform);
         }
 
         private void OnGameFilterOptionPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -849,6 +913,7 @@ namespace Core.Managers
                 _kickGameWhitelistSlugs = NormalizeWhitelist(whitelist);
 
             OnPropertyChanged(option.Platform == Platform.Twitch ? nameof(TwitchWhitelistSummary) : nameof(KickWhitelistSummary));
+            RefreshPriorityRanks(option.Platform);
             Task.Run(SaveSettings);
             GameWhitelistChanged?.Invoke(option.Platform);
         }
@@ -862,7 +927,6 @@ namespace Core.Managers
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .Select(x => x.Trim().ToLowerInvariant())
                 .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
                 .ToList();
         }
     }

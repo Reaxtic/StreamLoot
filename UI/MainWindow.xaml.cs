@@ -232,6 +232,8 @@ namespace UI
                         break;
                     case "--minimize":
                         EnterTrayMode();
+                        AppLogger.Info("App", "Startup entry launched Stream Loot minimized to the system tray.");
+                        NotificationManager.ShowNotification("Stream Loot", Loc.Instance["Status.StartedInTray"]);
                         break;
                 }
             }

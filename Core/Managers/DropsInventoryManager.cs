@@ -9,6 +9,7 @@ using Core.Models;
 using Core.Enums;
 using System.IO;
 using System.Net.Http;
+using System.Collections.Concurrent;
 
 namespace Core.Managers
 {
@@ -122,6 +123,7 @@ namespace Core.Managers
         private DateTime _twitchPinSuspendedAt = DateTime.MinValue;
         private DateTime _kickPinSuspendedAt = DateTime.MinValue;
         private DateTime _lastPinOnlineCheck = DateTime.MinValue;
+        private DateTime _lastGamePriorityCheck = DateTime.MinValue;
 
         private bool IsPinSuspended(Platform platform) => platform == Platform.Twitch ? _twitchPinSuspended : _kickPinSuspended;
 
@@ -482,13 +484,26 @@ namespace Core.Managers
         {
             _ = ApplyMiningPriorityModeChangeAsync(mode);
         }
+
+        private readonly object _gameFilterDebounceSync = new();
+        private CancellationTokenSource? _gameFilterChangeCts;
+
         /// <summary>
         /// Handles changes to the game whitelist for the specified platform.
         /// </summary>
         /// <param name="platform">The platform for which the game whitelist has changed.</param>
         private void OnGameWhitelistChanged(Platform platform)
         {
-            _ = ApplyGameWhitelistChangeAsync(platform);
+            CancellationTokenSource next = new();
+            CancellationTokenSource? previous;
+            lock (_gameFilterDebounceSync)
+            {
+                previous = _gameFilterChangeCts;
+                _gameFilterChangeCts = next;
+            }
+
+            previous?.Cancel();
+            _ = ApplyGameWhitelistChangeAsync(next);
         }
         /// <summary>
         /// Applies a change to the mining priority mode and triggers an immediate re-evaluation of active campaigns if
@@ -544,11 +559,13 @@ namespace Core.Managers
         /// affected by the update.</param>
         /// <returns>A task that represents the asynchronous operation of applying the whitelist change and re-evaluating active
         /// campaigns.</returns>
-        private async Task ApplyGameWhitelistChangeAsync(Platform platform)
+        private async Task ApplyGameWhitelistChangeAsync(CancellationTokenSource debounce)
         {
             try
             {
-                AppLogger.Info("Miner", $"{platform} game whitelist changed. Triggering immediate re-evaluation.");
+                // Collapse a burst of checkbox clicks into one list rebuild and one network re-evaluation.
+                await Task.Delay(500, debounce.Token);
+                AppLogger.Info("Miner", "Game filters changed. Applying one debounced re-evaluation.");
 
                 RefreshActiveCampaignsFromLatestSnapshot();
 
@@ -571,12 +588,25 @@ namespace Core.Managers
                 }
 
                 AppLogger.Debug("Miner", $"Immediate re-evaluation starting after whitelist change. activeCampaigns={ActiveCampaigns.Count}");
-                await StartWatchingStreams(true, platform); // only the platform whose whitelist changed
-                AppLogger.Info("Miner", "Immediate re-evaluation completed after whitelist change.");
+                await StartWatchingStreams(true);
+                AppLogger.Info("Miner", "Debounced re-evaluation completed after game-filter changes.");
+            }
+            catch (OperationCanceledException) when (debounce.IsCancellationRequested)
+            {
+                // Superseded by a newer checkbox change.
             }
             catch (Exception ex)
             {
                 AppLogger.Error("Miner", "Failed to apply game whitelist change immediately.", ex);
+            }
+            finally
+            {
+                lock (_gameFilterDebounceSync)
+                {
+                    if (ReferenceEquals(_gameFilterChangeCts, debounce))
+                        _gameFilterChangeCts = null;
+                }
+                debounce.Dispose();
             }
         }
         /// <summary>
@@ -600,6 +630,9 @@ namespace Core.Managers
                     ? snapshot
                     : [.. ActiveCampaigns];
 
+                Dictionary<string, DropsCampaign> existingById = ActiveCampaigns
+                    .ToDictionary(c => c.Id, StringComparer.Ordinal);
+
                 UISettingsManager.Instance.UpdateAvailableGameFilterOptions(sourceCampaigns);
 
                 List<DropsCampaign> filteredCampaigns = sourceCampaigns
@@ -610,7 +643,20 @@ namespace Core.Managers
 
                 ActiveCampaigns.Clear();
                 foreach (DropsCampaign campaign in filteredCampaigns)
-                    ActiveCampaigns.Add(campaign);
+                {
+                    DropsCampaign toAdd = campaign;
+                    if (existingById.TryGetValue(campaign.Id, out DropsCampaign? previous))
+                    {
+                        toAdd = MergeCampaignProgress(campaign, previous) with
+                        {
+                            Availability = previous.Availability,
+                            OnlineChannels = previous.OnlineChannels,
+                            OnlineChannelNames = previous.OnlineChannelNames
+                        };
+                    }
+
+                    ActiveCampaigns.Add(ApplyClaimedLedger(toAdd));
+                }
 
                 UpdateCurrentSelectionFlags();
             });
@@ -800,7 +846,7 @@ namespace Core.Managers
                 return campaign;
 
             List<DropsReward> rewards = campaign.Rewards.Select(r =>
-                !r.IsClaimed && ClaimedDropsStore.Instance.IsClaimed(campaign.Id, r.Id)
+                !r.IsClaimed && ClaimedDropsStore.Instance.IsClaimed(campaign, r)
                     ? r with { IsClaimed = true, ProgressMinutes = r.RequiredMinutes }
                     : r).ToList();
 
@@ -910,6 +956,22 @@ namespace Core.Managers
 
             if (startWatching && !_isPaused)
                 _ = StartWatchingStreams(); // Fire and forget - will handle its own loop
+
+            // Warm availability in the background so opening Inventory does not begin with every campaign stuck on
+            // "Checking...". The method is internally throttled/locked, so a simultaneous Inventory refresh simply
+            // reuses the in-flight pass instead of starting another one.
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(1500);
+                    await RefreshAvailabilityAsync();
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn("Availability", $"Background warm-up failed: {ex.Message}");
+                }
+            });
         }
         /// <summary>
         /// Temporarily pauses stream watching and waits for any active watch cycle to exit.
@@ -1421,6 +1483,36 @@ namespace Core.Managers
                     });
                 }
 
+                async Task ApplyResultAsync(string campaignId)
+                {
+                    await Application.Current.Dispatcher.InvokeAsync(() =>
+                    {
+                        int index = -1;
+                        for (int i = 0; i < ActiveCampaigns.Count; i++)
+                        {
+                            if (string.Equals(ActiveCampaigns[i].Id, campaignId, StringComparison.Ordinal))
+                            {
+                                index = i;
+                                break;
+                            }
+                        }
+
+                        if (index < 0)
+                            return;
+
+                        (CampaignAvailability State, int Online) info;
+                        lock (result)
+                        {
+                            if (!result.TryGetValue(campaignId, out info))
+                                return;
+                        }
+
+                        DropsCampaign current = ActiveCampaigns[index];
+                        if (current.Availability != info.State || current.OnlineChannels != info.Online)
+                            ActiveCampaigns[index] = current with { Availability = info.State, OnlineChannels = info.Online };
+                    });
+                }
+
                 // Phase 1 — instant: general/category drops and Kick channel-specific (from the batched lookup).
                 List<DropsCampaign> twitchToCheck = new();         // channel-specific (check listed channels)
                 List<DropsCampaign> twitchGeneralToCheck = new();  // general (check the game directory)
@@ -1465,16 +1557,36 @@ namespace Core.Managers
                 }
                 ApplyResults();
 
-                // Phase 2 — Twitch channel-specific, checked in parallel (capped) so badges fill in quickly.
+                // Phase 2 — Twitch checks share one directory request per game slug. Without this cache, every
+                // Rust campaign queried the same directory separately and a 100+ campaign inventory could remain
+                // on "Checking..." for minutes. Results are applied one-by-one so the UI fills progressively.
+                ConcurrentDictionary<string, Lazy<Task<List<(string Login, int Viewers)>>>> directoryCache =
+                    new(StringComparer.OrdinalIgnoreCase);
+
+                async Task<List<(string Login, int Viewers)>> GetDirectoryAsync(string slug)
+                {
+                    Lazy<Task<List<(string Login, int Viewers)>>> lazy = directoryCache.GetOrAdd(
+                        slug,
+                        key => new Lazy<Task<List<(string Login, int Viewers)>>>(() =>
+                            _twitchGqlService!.QueryLiveDirectoryChannelsAsync(key, 60),
+                            LazyThreadSafetyMode.ExecutionAndPublication));
+
+                    return await lazy.Value.WaitAsync(TimeSpan.FromSeconds(15));
+                }
+
                 using (SemaphoreSlim gate = new SemaphoreSlim(5))
                 {
-                    await Task.WhenAll(twitchToCheck.Select(async c =>
+                    List<Task> checks = twitchToCheck.Select(async c =>
                     {
                         await gate.WaitAsync();
                         try
                         {
-                            List<(string Login, int Viewers)> live = await QueryDropsEnabledTwitchChannelsAsync(
-                                CampaignChannelLogins(c).Take(60).ToList(), c.Slug);
+                            HashSet<string> allowed = CampaignChannelLogins(c)
+                                .Take(60)
+                                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                            List<(string Login, int Viewers)> live = (await GetDirectoryAsync(c.Slug))
+                                .Where(channel => allowed.Contains(channel.Login))
+                                .ToList();
                             lock (result) result[c.Id] = (live.Count > 0 ? CampaignAvailability.Available : CampaignAvailability.Unavailable, live.Count);
                         }
                         catch (Exception ex)
@@ -1482,18 +1594,21 @@ namespace Core.Managers
                             AppLogger.Warn("Availability", $"Twitch live check failed for '{c.Name}': {ex.Message}");
                             lock (result) result[c.Id] = (CampaignAvailability.Unknown, 0);
                         }
-                        finally { gate.Release(); }
-                    }));
+                        finally
+                        {
+                            gate.Release();
+                            await ApplyResultAsync(c.Id);
+                        }
+                    }).ToList();
 
                     // Twitch general drops: upgrade "Category drop" to a live count from the game directory when
                     // available. On any failure we leave the Category label (the directory query is best-effort).
-                    await Task.WhenAll(twitchGeneralToCheck.Select(async c =>
+                    checks.AddRange(twitchGeneralToCheck.Select(async c =>
                     {
                         await gate.WaitAsync();
                         try
                         {
-                            List<(string Login, int Viewers)> live = await _twitchGqlService!
-                                .QueryLiveDirectoryChannelsAsync(c.Slug, 30);
+                            List<(string Login, int Viewers)> live = await GetDirectoryAsync(c.Slug);
                             if (live.Count > 0)
                                 lock (result) result[c.Id] = (CampaignAvailability.Available, live.Count);
                         }
@@ -1501,8 +1616,14 @@ namespace Core.Managers
                         {
                             AppLogger.Warn("Availability", $"Twitch directory check failed for '{c.Name}': {ex.Message}");
                         }
-                        finally { gate.Release(); }
+                        finally
+                        {
+                            gate.Release();
+                            await ApplyResultAsync(c.Id);
+                        }
                     }));
+
+                    await Task.WhenAll(checks);
                 }
                 ApplyResults();
 
@@ -1762,7 +1883,7 @@ namespace Core.Managers
 
                         // Remember it permanently: the server won't tell us this drop is collected on later
                         // refreshes, so without this the reward comes back as unclaimed and gets re-mined forever.
-                        ClaimedDropsStore.Instance.Add(parentCampaign.Id, item.Id);
+                        ClaimedDropsStore.Instance.Add(parentCampaign, item);
                         StatsManager.Instance.AddClaimedDrop(parentCampaign.Platform, parentCampaign.Name, item.Name);
 
                         if (UISettingsManager.Instance.NotifyOnAutoClaimed)
@@ -2055,7 +2176,9 @@ namespace Core.Managers
                         DropsCampaign? bestTwitch =
                             forcedTwitchCampId != null
                                 ? remainingTwitchCampaigns.FirstOrDefault(c => c.Id == forcedTwitchCampId) ?? await SelectBestCampaign(remainingTwitchCampaigns)
-                            : (!campaignPinned && _currentTwitchCampaign != null && !IsNotCrediting(_currentTwitchCampaign.Id) && remainingTwitchCampaigns.FirstOrDefault(c => c.Id == _currentTwitchCampaign.Id) is { } stickyTwitch)
+                            : (!campaignPinned && _currentTwitchCampaign != null && !IsNotCrediting(_currentTwitchCampaign.Id)
+                                && !remainingTwitchCampaigns.Any(c => UISettingsManager.Instance.GamePriority(c) < UISettingsManager.Instance.GamePriority(_currentTwitchCampaign))
+                                && remainingTwitchCampaigns.FirstOrDefault(c => c.Id == _currentTwitchCampaign.Id) is { } stickyTwitch)
                                 ? stickyTwitch
                                 : await SelectBestCampaign(remainingTwitchCampaigns);
                         if (bestTwitch == null)
@@ -2736,6 +2859,33 @@ namespace Core.Managers
                     List<DropsCampaign> twitchCampaigns = [.. ActiveCampaigns.Where(c => c.Platform == Platform.Twitch && c.HasProgressToMake() && c.IsWithinActiveWindow())];
                     List<DropsCampaign> kickCampaigns = [.. ActiveCampaigns.Where(c => c.Platform == Platform.Kick && c.HasProgressToMake() && c.IsWithinActiveWindow())];
 
+                    if ((DateTime.Now - _lastGamePriorityCheck) > TimeSpan.FromMinutes(3))
+                    {
+                        _lastGamePriorityCheck = DateTime.Now;
+                        Platform? priorityReturned = null;
+                        foreach (var platform in new[] { Platform.Twitch, Platform.Kick })
+                        {
+                            // Explicit campaign pins remain manual overrides.
+                            if (ActivePinFor(platform) != null && !IsPinSuspended(platform)) continue;
+                            var current = platform == Platform.Twitch ? _currentTwitchCampaign : _currentKickCampaign;
+                            int currentRank = current == null ? int.MaxValue : UISettingsManager.Instance.GamePriority(current);
+                            var candidates = (platform == Platform.Twitch ? twitchCampaigns : kickCampaigns)
+                                .Where(c => UISettingsManager.Instance.IsCampaignAllowedByWhitelist(c)
+                                    && !IsNotCrediting(c.Id)
+                                    && UISettingsManager.Instance.GamePriority(c) < currentRank)
+                                .OrderBy(UISettingsManager.Instance.GamePriority);
+                            foreach (var candidate in candidates)
+                            {
+                                if (!await PinnedCampaignHasLiveChannelAsync(candidate)) continue;
+                                AppLogger.Info("Selection", $"Higher-priority game available: {candidate.GameName}; re-evaluating mining.");
+                                priorityReturned = platform;
+                                break;
+                            }
+                            if (priorityReturned != null) break;
+                        }
+                        if (priorityReturned != null) { _streamHealthTimer?.Stop(); await StartWatchingStreams(true, priorityReturned); return; }
+                    }
+
                     // NOTE: an ad is NOT a reason to switch — Twitch keeps crediting drop watch time during ads, and
                     // switching channel/campaign on every ad caused needless thrashing (jumping off a perfectly good
                     // campaign). Only switch when the stream is actually offline or in the wrong category.
@@ -2915,6 +3065,12 @@ namespace Core.Managers
                     }
                 }
             }
+
+            // Explicit game preferences outrank automatic progress heuristics. The caller retries the remaining
+            // candidates when no eligible streamer is found, so an unavailable priority never blocks fallback.
+            int bestGameRank = campaigns.Select(UISettingsManager.Instance.GamePriority).DefaultIfEmpty(int.MaxValue).Min();
+            if (bestGameRank != int.MaxValue)
+                campaigns = campaigns.Where(c => UISettingsManager.Instance.GamePriority(c) == bestGameRank).ToList();
 
             // Finish started work before opening another reward. Among campaigns with a partially progressed
             // reward, the one with the fewest REAL minutes to its next reward always wins. This deliberately runs
@@ -3322,13 +3478,18 @@ namespace Core.Managers
                 // dropCampaignsInProgress, so without this the reconcile would never learn it is finished and the
                 // miner would keep watching it (server progress reported as 0 => endless channel rotation).
                 HashSet<string> claimedInstanceIds = new(StringComparer.Ordinal);
+                Dictionary<string, DateTimeOffset> claimedAwardDates = new(StringComparer.Ordinal);
                 JsonArray? eventDrops = inventory?["gameEventDrops"]?.AsArray();
                 if (eventDrops != null)
                     foreach (JsonNode? e in eventDrops)
                     {
                         string? id = e?["id"]?.GetValue<string>();
-                        if (!string.IsNullOrEmpty(id))
+                        if (!string.IsNullOrEmpty(id)
+                            && DateTimeOffset.TryParse(e?["lastAwardedAt"]?.GetValue<string>(), out var awarded))
+                        {
                             claimedInstanceIds.Add(id);
+                            claimedAwardDates[id] = awarded;
+                        }
                     }
 
                 // One-shot diagnostic: shows whether Twitch's claimed-drops inventory can be matched to our reward
@@ -3352,15 +3513,22 @@ namespace Core.Managers
                         DropsCampaign c = ActiveCampaigns[i];
                         if (c.Platform != Platform.Twitch)
                             continue;
+                        bool HasAward(DropsReward r) => !string.IsNullOrEmpty(r.DropInstanceId)
+                            && claimedAwardDates.TryGetValue(r.DropInstanceId, out var awarded)
+                            && awarded >= c.StartsAt && awarded < c.EndsAt;
                         bool touched = c.Rewards.Any(r => rewardProgress.ContainsKey(r.Id)
-                            || (!string.IsNullOrEmpty(r.DropInstanceId) && claimedInstanceIds.Contains(r.DropInstanceId!)));
+                            || ClaimedDropsStore.Instance.IsClaimed(c, r)
+                            || HasAward(r));
                         if (!touched)
                             continue;
 
                         List<DropsReward> updated = c.Rewards.Select(r =>
                         {
-                            if ((!string.IsNullOrEmpty(r.DropInstanceId) && claimedInstanceIds.Contains(r.DropInstanceId!))
-                                || ClaimedDropsStore.Instance.IsClaimed(c.Id, r.Id))
+                            if ((rewardProgress.TryGetValue(r.Id, out var server) && server.Claimed)
+                                || HasAward(r))
+                                ClaimedDropsStore.Instance.Add(c, r, HasAward(r) ? claimedAwardDates[r.DropInstanceId!] : null);
+                            if (HasAward(r)
+                                || ClaimedDropsStore.Instance.IsClaimed(c, r))
                                 return r with { IsClaimed = true, ProgressMinutes = r.RequiredMinutes };
                             return rewardProgress.TryGetValue(r.Id, out (int Minutes, bool Claimed) p)
                                 ? r with { ProgressMinutes = Math.Min(p.Minutes, r.RequiredMinutes), IsClaimed = p.Claimed }

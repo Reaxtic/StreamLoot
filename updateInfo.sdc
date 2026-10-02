@@ -1,7 +1,7 @@
 {
-  "version": "1.1.11",
+  "version": "1.1.18",
   "type": "Patch",
-  "changelog": "Twitch channels must now be live, in the correct category, and present in Twitch's DROPS_ENABLED directory before Stream Loot watches them.",
+  "changelog": "Includes 1.1.12–1.1.18: Twitch campaigns without linked game accounts, persistent confirmed claims, bounded availability checks, ordered game priorities with fallback, preserved exclusions, stable list sorting and independently resizable game lists.",
   "historic_versions": [
     {
       "version": "1.1.10",

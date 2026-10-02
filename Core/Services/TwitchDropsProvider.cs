@@ -3,6 +3,7 @@ using Core.Logging;
 using Core.Interfaces;
 using Core.Models;
 using Core.Enums;
+using Core.Managers;
 
 namespace Core.Services
 {
@@ -38,6 +39,8 @@ namespace Core.Services
                 string userId = activeCampaigns["data"]?["currentUser"]?["id"]?.GetValue<string>() ?? "";
                 gql.UserId = userId;
 
+                int activeCampaignsWithoutLinkedAccount = 0;
+
                 campaigns?.RemoveAll(campaign =>
                 {
                     if (campaign is not JsonObject campaignObj)
@@ -48,17 +51,19 @@ namespace Core.Services
                         statusNode?.GetValue<string>() != "ACTIVE")
                         return true;
 
-                    // Remove if not connected
+                    // Account linking is not required for watch progress. Twitch may require it only when the
+                    // reward is claimed or delivered to the game, so an otherwise active campaign must remain
+                    // visible and mineable even when isAccountConnected is false (or absent).
                     if (!campaignObj.TryGetPropertyValue("self", out JsonNode? selfNode) ||
                         selfNode is not JsonObject selfObj ||
                         !selfObj.TryGetPropertyValue("isAccountConnected", out JsonNode? connectedNode) ||
                         connectedNode?.GetValue<bool>() != true)
-                        return true; // Remove
+                        activeCampaignsWithoutLinkedAccount++;
 
                     return false; // Keep
                 });
 
-                AppLogger.Info("TwitchDrops", $"Campaigns after status/account filter: count={campaigns?.Count ?? 0}");
+                AppLogger.Info("TwitchDrops", $"Campaigns after status filter: count={campaigns?.Count ?? 0}, accountNotLinked={activeCampaignsWithoutLinkedAccount}");
 
                 if (campaigns == null || campaigns.Count == 0)
                 {
@@ -143,7 +148,9 @@ namespace Core.Services
 
                         // 2. Apply gameEventDrops (completed drops) - these mark rewards as claimed via DropInstanceId
                         JsonObject? matchingEventDrop = gameEventDrops.OfType<JsonObject>()
-                            .FirstOrDefault(e => e["id"]?.GetValue<string>() == reward.DropInstanceId);
+                            .FirstOrDefault(e => e["id"]?.GetValue<string>() == reward.DropInstanceId
+                                && DateTimeOffset.TryParse(e["lastAwardedAt"]?.GetValue<string>(), out var awarded)
+                                && awarded >= dropCampaign.StartsAt && awarded < dropCampaign.EndsAt);
 
                         if (matchingEventDrop != null)
                         {
@@ -155,6 +162,11 @@ namespace Core.Services
                             };
                         }
 
+                        if (updatedReward.IsClaimed)
+                            ClaimedDropsStore.Instance.Add(dropCampaign, updatedReward,
+                                matchingEventDrop != null ? DateTimeOffset.Parse(matchingEventDrop["lastAwardedAt"]!.GetValue<string>()) : null);
+                        if (ClaimedDropsStore.Instance.IsClaimed(dropCampaign, updatedReward))
+                            updatedReward = updatedReward with { IsClaimed = true, ProgressMinutes = reward.RequiredMinutes };
                         updatedRewardsForThisCampaign.Add(updatedReward);
                     }
 
