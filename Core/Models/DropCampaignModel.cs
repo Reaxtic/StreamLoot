@@ -50,6 +50,7 @@ namespace Core.Models
         string? DropInstanceId = null,
         bool IsCurrentReward = false)
     {
+        public string? TwitchBenefitType { get; init; }
         /// <summary>Completion percentage (0–100) of this reward, derived from progress vs. required minutes.</summary>
         public int ProgressPercent => RequiredMinutes <= 0
             ? 0

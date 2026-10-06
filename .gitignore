@@ -23,3 +23,9 @@ ClaimedDrops.json
 StreamSelection.json
 logs/
 *.token
+TwitchDeviceToken.bin
+Stats.json
+LastWatchedStreamers.json
+GqlHashCache.json
+sha_cache.tsgs
+*.active

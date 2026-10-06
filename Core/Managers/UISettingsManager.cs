@@ -610,6 +610,8 @@ namespace Core.Managers
         /// registry reflects the desired behavior.</remarks>
         private void UpdateStartupRegistry()
         {
+            // Loading partial settings and the temporary updater must never rewrite the launch target.
+            if (_isLoadingSettings || Environment.GetCommandLineArgs().Contains("--updating")) return;
             string keyName = "StreamLoot";
             string exePath = Utility.GetExePath();
 
@@ -617,21 +619,28 @@ namespace Core.Managers
             {
                 if (!StartWithWindows)
                 {
+                    Core.Services.WindowsAutoStartService.Configure(false, exePath, false);
                     // Just remove it - clean and simple
                     Utility.RemoveFromRegistry(keyName);
                     return;
                 }
 
-                // StartWithWindows = true -> we MUST have a registry entry
+                if (Core.Services.WindowsAutoStartService.Configure(true, exePath, MinimizeToTrayOnStartup))
+                {
+                    Utility.RemoveFromRegistry(keyName); // one launch mechanism, not duplicate startup entries
+                    return;
+                }
+
+                // Restricted machines retain the existing current-user registry fallback.
                 if (MinimizeToTrayOnStartup)
                 {
                     // Launch minimized
-                    Utility.WriteToRegistry(keyName, exePath, ["--minimize"]);
+                    Utility.WriteToRegistry(keyName, exePath, ["--autostart", "--minimize"]);
                 }
                 else
                 {
                     // Launch normally
-                    Utility.WriteToRegistry(keyName, exePath);
+                    Utility.WriteToRegistry(keyName, exePath, ["--autostart"]);
                 }
             }
             catch (Exception ex)

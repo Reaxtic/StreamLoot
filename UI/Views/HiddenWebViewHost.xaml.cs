@@ -1305,11 +1305,20 @@ namespace UI.Views
             // Force fresh navigation every time
             string forcedUrl = $"{url}{(url.Contains('?') ? "&" : "?")}forceReload={DateTimeOffset.Now.ToUnixTimeMilliseconds()}";
 
-            WebView.Source = new Uri(forcedUrl);
-
-            // Still wait for it (in case it's a real nav)
-            await WaitForNavigationAsync();
-            await WaitForDomReadyAsync();
+            Uri destination = new(forcedUrl);
+            // Subscribe BEFORE navigation; otherwise a fast completion can be missed forever.
+            Task navigation = WaitForNavigationAsync();
+            try
+            {
+                WebView.Source = destination;
+                await navigation;
+                await WaitForDomReadyAsync();
+            }
+            catch
+            {
+                WebView.CoreWebView2?.Stop();
+                throw;
+            }
         }
         /// <summary>
         /// Executes the specified JavaScript code asynchronously in the context of the current web page.
@@ -1323,7 +1332,7 @@ namespace UI.Views
         public async Task<string> ExecuteScriptAsync(string script)
         {
             // ExecuteScriptAsync returns a JSON string literal: e.g. "\"{...}\""
-            return await WebView.CoreWebView2.ExecuteScriptAsync(script);
+            return await WebView.CoreWebView2.ExecuteScriptAsync(script).WaitAsync(TimeSpan.FromSeconds(30));
         }
 
         /// <summary>
@@ -1334,18 +1343,19 @@ namespace UI.Views
         /// not initiate navigation; it only observes completion.</remarks>
         /// <returns>A task that completes when the next navigation has finished. The task completes successfully when navigation
         /// is complete.</returns>
-        public Task WaitForNavigationAsync()
+        public async Task WaitForNavigationAsync()
         {
             TaskCompletionSource<bool> tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             void handler(object? s, CoreWebView2NavigationCompletedEventArgs e)
             {
-                WebView.CoreWebView2.NavigationCompleted -= handler;
-                tcs.TrySetResult(true);
+                if (e.IsSuccess) tcs.TrySetResult(true);
+                else tcs.TrySetException(new System.IO.IOException($"WebView navigation failed: {e.WebErrorStatus}"));
             }
 
             WebView.CoreWebView2.NavigationCompleted += handler;
-            return tcs.Task;
+            try { await tcs.Task.WaitAsync(TimeSpan.FromSeconds(30)); }
+            finally { WebView.CoreWebView2.NavigationCompleted -= handler; }
         }
         /// <summary>
         /// Asynchronously waits until the web view's DOM is fully loaded and ready for interaction.
@@ -1356,18 +1366,23 @@ namespace UI.Views
         /// <returns>A task that completes when the DOM is in a ready state.</returns>
         public async Task WaitForDomReadyAsync()
         {
-            while (true)
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            TimeSpan timeout = TimeSpan.FromSeconds(15);
+            while (timer.Elapsed < timeout)
             {
+                TimeSpan remaining = timeout - timer.Elapsed;
+                if (remaining <= TimeSpan.Zero) break;
                 string result = await WebView.ExecuteScriptAsync(
                     "document.readyState"
-                );
+                ).WaitAsync(remaining);
 
                 // result comes back as a quoted string: "\"complete\""
                 if (result.Contains("complete", StringComparison.OrdinalIgnoreCase))
-                    break;
+                    return;
 
                 await Task.Delay(50);
             }
+            throw new TimeoutException("WebView DOM did not become ready within 15 seconds.");
         }
         /// <summary>
         /// Asynchronously waits until the page is network-idle for a continuous period.

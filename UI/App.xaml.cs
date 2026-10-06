@@ -56,7 +56,7 @@ namespace UI
                 // Notify existing instance
                 AppLogger.Warn("App", "Second instance detected; signaling existing instance and shutting down.");
                 ProcessExitTracker.RecordReason("Second instance; activated existing instance");
-                TryActivateExistingInstance();
+                if (!e.Args.Contains("--autostart")) TryActivateExistingInstance();
                 Shutdown();
                 return;
             }

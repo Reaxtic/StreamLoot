@@ -309,7 +309,7 @@ namespace Core.Services
                                 ProgressMinutes: currentMinutes,
                                 IsClaimed: isClaimed,
                                 DropInstanceId: benefitId
-                            ));
+                            ) { TwitchBenefitType = benefit["distributionType"]?.GetValue<string>() });
                     }
                 }
             }

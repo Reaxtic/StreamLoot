@@ -762,10 +762,23 @@ namespace UI.Views
             // Validate sequentially: the two WebViews share a CDP/WebView2 environment and running both
             // credential checks concurrently raced (intermittently both returned "not logged in").
             if (_twitchService.Status != ConnectionStatus.Connected)
-                await ValidateTwitchCredentialsAsync();
+                try { await ValidateTwitchCredentialsAsync(); }
+                catch (Exception ex) { AppLogger.Warn("Autostart", $"Twitch validation will be retried: {ex.Message}"); }
 
             if (_kickService.Status != ConnectionStatus.Connected)
-                await ValidateKickCredentialsAsync();
+                try { await ValidateKickCredentialsAsync(); }
+                catch (Exception ex) { AppLogger.Warn("Autostart", $"Kick validation will be retried: {ex.Message}"); }
+        }
+
+        private async Task RetryStartupValidationAsync()
+        {
+            foreach (int seconds in new[] { 30, 60, 120, 240, 300 })
+            {
+                if (_twitchService.Status == ConnectionStatus.Connected && _kickService.Status == ConnectionStatus.Connected) return;
+                await Task.Delay(TimeSpan.FromSeconds(seconds));
+                if (Dispatcher.HasShutdownStarted) return;
+                await ValidateCredentialsAsync(); // connected platforms are not navigated or reset
+            }
         }
 
         #region Event Handlers
@@ -789,6 +802,7 @@ namespace UI.Views
 
                 // Load campaigns / drops
                 await StartAutoRefreshDropsAsync();
+                _ = RetryStartupValidationAsync();
             }
         }
         /// <summary>

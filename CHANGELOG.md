@@ -3,6 +3,57 @@
 All notable changes to **Stream Loot** are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.1.23] — 2026-10-06
+
+### Connection recovery
+
+- Twitch directory transport errors remain unknown rather than being reported as an offline streamer. A previously eligible stream is retained while its connection is checked again; a successful empty directory still counts as unavailable.
+- Failed watch heartbeats or progress requests discard old frozen samples without penalizing a channel. After a successful heartbeat, stall detection waits three minutes before collecting fresh samples. Reopening the same channel also resets its sample window.
+
+### Windows autostart
+
+- The Start with Windows setting registers a current-user logon task with a 30-second delay, explicit application working directory and optional tray launch. It uses the logged-in user's session, not a stored password or administrator privileges. Battery power does not block startup and the task has no runtime limit.
+- The old Run entry is removed only after task registration succeeds. Machines that reject Task Scheduler registration retain the current-user Run fallback. Disabling autostart removes both launch mechanisms.
+- Partial settings loading and the temporary updater no longer rewrite autostart paths. An automatic duplicate launch exits without bringing the existing window to the foreground.
+- Startup credential failures no longer abort initialization. Disconnected platforms receive five bounded retries; already connected platforms remain undisturbed.
+
+### Included fixes from previously local versions 1.1.19–1.1.22
+
+- Kick verifies that its actual page is the selected channel before reusing a stream, and skips stalled category-directory candidates.
+- Watchdog soft recovery no longer moves the hard restart deadline. WebView navigation, DOM readiness and script calls have bounded waits.
+- Twitch stalled channels are tracked per campaign. Exhausting available channels or three distinct attempts starts a campaign cooldown, with repeat delays growing from 15 minutes up to six hours during the current session. Pins, game priorities and exclusions remain intact.
+- Missing rewards are checked through Twitch's claim endpoint with bounded retries. Only confirmed successful or already-claimed responses are saved; absence alone never marks a reward complete. Finished or expired watched campaigns trigger next-campaign selection.
+- Added regression coverage for recovery grace, stalled-channel isolation, progressive backoff, claim response handling and autostart task configuration.
+
+The Windows x64 package is self-contained. Browser profiles, credentials, personal settings, claim history and logs are not included.
+
+## [1.1.22] — 2026-10-04
+
+- Repeated Twitch campaign stalls increase the retry delay to 15, 30, 60, 120, 240 and at most 360 minutes. An expired delay clears the channel attempt list but retains the failure history until confirmed progress resumes. This history lasts for the current application session.
+- New server minutes reset the delay, including progress on the next reward. Missing counters and old values reappearing do not count as new progress.
+- Missing rewards are checked through Twitch's claim endpoint when automatic claiming is enabled, prioritizing badges/emotes and rewards last seen within five minutes of completion. Zero-history checks also work after restart. Only a successful or already-claimed response records completion; failed checks leave the reward unclaimed. Checks are limited to once per reward every 30 minutes and three candidates per reconciliation; throttled candidates do not block other rewards.
+- Empty progress inventories still run stalled-campaign detection. Added regression tests for increasing delays, restored counters, per-reward progress and accepted/rejected claim responses.
+- The health check reselects Twitch immediately after reconciliation confirms that the watched campaign is fully claimed or expired, rather than waiting for its old completion timer.
+
+## [1.1.21] — 2026-10-03
+
+- Twitch temporarily skips a campaign for 15 minutes after three distinct channels fail to earn confirmed server progress, or after all available channels have stalled. Pins and game priorities are preserved.
+- Failed channels are scoped to their campaign, not blocked across unrelated campaigns. Each new channel gets a fresh observation window; successful server progress and claimable rewards clear failures.
+- Cooldown applies before pinned and automatic selection. Earlier pinned campaigns can return after cooldown while a later pin is being mined; ready rewards remain eligible for automatic claiming.
+- Added repeatable tests for attempt limits, exhausted-channel fallback, exact retry deadlines and campaign isolation.
+
+## [1.1.20] — 2026-10-03
+
+- Watchdog recovery attempts no longer reset the engine-silence deadline. Full process recovery remains due after 12 minutes without a completed heartbeat, even if a soft restart hangs.
+- WebView navigation subscribes before loading the page, fails explicitly on navigation errors, and stops waiting after 30 seconds. DOM readiness is limited to 15 seconds and script execution to 30 seconds.
+- Navigation event subscriptions are removed after completion, failure or timeout. The replacement process must still confirm readiness before the current instance exits.
+
+## [1.1.19] — 2026-10-02
+
+- Kick only keeps a previously watched channel without navigation when the actual WebView page is still that channel, preventing the category directory from being mistaken for a playing stream.
+- General Kick campaigns skip stalled remembered channels and choose a non-stalled channel from the full directory list.
+- Diagnostics now record the server-reported minutes and channel of the watched Kick campaign on reconciliation.
+
 ## [1.1.18] — 2026-10-02
 
 - Twitch and Kick game lists can be resized independently by dragging the handle below each list. Heights are saved on drag completion and restored after restart.

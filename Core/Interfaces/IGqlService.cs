@@ -60,7 +60,7 @@ namespace Core.Interfaces
         /// Lists currently-live, drops-enabled channels in a game's directory (for "general" drop campaigns
         /// not tied to specific channels), each with its current viewer count, sorted by viewers.
         /// </summary>
-        Task<List<(string Login, int Viewers)>> QueryLiveDirectoryChannelsAsync(string gameSlug, int limit = 30, CancellationToken ct = default);
+        Task<List<(string Login, int Viewers)>> QueryLiveDirectoryChannelsAsync(string gameSlug, int limit = 30, CancellationToken ct = default, bool throwOnFailure = false);
         /// <summary>
         /// Sends a single "minute-watched" event to Twitch's analytics endpoint to credit drop watch time for the
         /// given live channel, independent of the embedded player actually decoding video.

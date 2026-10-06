@@ -678,7 +678,7 @@ namespace Core.Services
         /// Lists currently-LIVE, drops-enabled channels in a game's directory (used for "general" drop campaigns
         /// that aren't tied to specific channels). Returns each channel's login and current viewer count, sorted by viewers.
         /// </summary>
-        public async Task<List<(string Login, int Viewers)>> QueryLiveDirectoryChannelsAsync(string gameSlug, int limit = 30, CancellationToken ct = default)
+        public async Task<List<(string Login, int Viewers)>> QueryLiveDirectoryChannelsAsync(string gameSlug, int limit = 30, CancellationToken ct = default, bool throwOnFailure = false)
         {
             if (string.IsNullOrWhiteSpace(gameSlug))
                 return new List<(string, int)>();
@@ -729,6 +729,7 @@ namespace Core.Services
                 if (!response.IsSuccessStatusCode)
                 {
                     AppLogger.Warn("TwitchGql", $"QueryLiveDirectoryChannels HTTP {(int)response.StatusCode}.");
+                    if (throwOnFailure) throw new HttpRequestException("Twitch directory request failed.", null, response.StatusCode);
                     return new List<(string, int)>();
                 }
 
@@ -737,6 +738,7 @@ namespace Core.Services
                 if (edges == null)
                 {
                     AppLogger.Warn("TwitchGql", "QueryLiveDirectoryChannels returned no edges.");
+                    if (throwOnFailure) throw new InvalidOperationException("Twitch directory response has no usable stream data.");
                     return new List<(string, int)>();
                 }
 
@@ -756,6 +758,7 @@ namespace Core.Services
             catch (Exception ex)
             {
                 AppLogger.Warn("TwitchGql", $"QueryLiveDirectoryChannels exception: {ex.Message}");
+                if (throwOnFailure) throw;
                 return new List<(string, int)>();
             }
         }
@@ -897,7 +900,7 @@ namespace Core.Services
         public async Task<bool> ClaimDropAsync(string campaignId, string rewardId, CancellationToken ct = default)
         {
             AppLogger.Info("TwitchGql", $"ClaimDrop started. campaignId={campaignId}, rewardId={rewardId}");
-            await System.Windows.Application.Current.Dispatcher.InvokeAsync(async () => await RefreshHeadersAsync(ct));
+            await RefreshHeadersAsync(ct);
 
             // Step 1. Construct the payload, according to the above format
             string operationName = "DropsPage_ClaimDropRewards";
@@ -955,7 +958,7 @@ namespace Core.Services
             JsonNode? result = root?[0];
 
             string? status = result?["data"]?["claimDropRewards"]?["status"]?.GetValue<string>();
-            bool success = status is "ELIGIBLE_FOR_ALL" or "DROP_INSTANCE_ALREADY_CLAIMED";
+            bool success = TwitchClaimRecoveryPolicy.IsConfirmedClaim(status);
             bool isConnected = result?["data"]?
                         ["claimDropRewards"]?
                         ["isUserAccountConnected"]?

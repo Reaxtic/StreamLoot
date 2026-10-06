@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Core/Managers/TwitchCampaignRetryPolicy.cs" Link="TwitchCampaignRetryPolicy.cs" />
+    <Compile Include="../../Core/Services/TwitchClaimRecoveryPolicy.cs" Link="TwitchClaimRecoveryPolicy.cs" />
+    <Compile Include="../../Core/Managers/TwitchConnectionRecoveryPolicy.cs" Link="TwitchConnectionRecoveryPolicy.cs" />
+    <Compile Include="../../Core/Services/StartupTaskPolicy.cs" Link="StartupTaskPolicy.cs" />
+  </ItemGroup>
+</Project>

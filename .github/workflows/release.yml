@@ -24,6 +24,12 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - name: Test recovery and startup policies
+        run: dotnet run --project tests/StreamLoot.RetryTests/StreamLoot.RetryTests.csproj -c Release
+
+      - name: Test Twitch transport and manager integration
+        run: dotnet run --project tests/StreamLoot.IntegrationTests/StreamLoot.IntegrationTests.csproj -c Release
+
       - name: Publish (self-contained win-x64)
         run: dotnet publish UI/UI.csproj -c Release -r win-x64 --self-contained true -o "dist/StreamLoot-${{ github.ref_name }}"
 
