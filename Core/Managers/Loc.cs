@@ -29,6 +29,20 @@ namespace Core.Managers
         private static readonly Dictionary<string, (string En, string Pl)> _map = new(StringComparer.Ordinal)
         {
             // ---- Navigation / window ----
+            ["Auth.Title"] = ("Twitch authorization", "Autoryzacja Twitch"),
+            ["Auth.Required"] = ("Twitch may require authorization. Start when you are ready.", "Twitch może wymagać autoryzacji. Rozpocznij, gdy będziesz gotowy."),
+            ["Auth.Start"] = ("Authorize Twitch", "Autoryzuj Twitch"),
+            ["Auth.Requesting"] = ("Requesting a fresh code…", "Pobieranie nowego kodu…"),
+            ["Auth.Waiting"] = ("Approve access on Twitch. Campaign refreshes will not cancel this code.", "Zatwierdź dostęp na Twitchu. Odświeżanie kampanii nie anuluje tego kodu."),
+            ["Auth.Expired"] = ("The code expired. Generate a new code when you are ready.", "Kod wygasł. Pobierz nowy, gdy będziesz gotowy."),
+            ["Auth.Approved"] = ("Twitch approved access.", "Twitch zatwierdził dostęp."),
+            ["Auth.Cancelled"] = ("Authorization cancelled. You can start again.", "Autoryzacja anulowana. Możesz rozpocząć ponownie."),
+            ["Auth.Failed"] = ("Authorization failed. Check your connection and try again.", "Autoryzacja nie powiodła się. Sprawdź połączenie i spróbuj ponownie."),
+            ["Auth.NewCode"] = ("Get a new code", "Pobierz nowy kod"),
+            ["Auth.Copy"] = ("Copy code", "Kopiuj kod"),
+            ["Auth.Open"] = ("Open Twitch", "Otwórz Twitch"),
+            ["Auth.Cancel"] = ("Cancel authorization", "Anuluj autoryzację"),
+            ["Auth.TimeLeft"] = ("Code valid for", "Kod ważny jeszcze"),
             ["Nav.Dashboard"] = ("Dashboard", "Panel"),
             ["Nav.Inventory"] = ("Inventory", "Ekwipunek"),
             ["Nav.Statistics"] = ("Statistics", "Statystyki"),

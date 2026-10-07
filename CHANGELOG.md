@@ -3,6 +3,22 @@
 All notable changes to **Stream Loot** are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.1.24] — 2026-10-07
+
+### Pinned campaigns and stalled streams
+
+- Earlier Twitch pins are checked at most once every three minutes, even while a later pin is being watched. Selection restarts only after a permitted earlier pin has a confirmed eligible live channel.
+- An available later pin remains playing while earlier pins are offline. A confirmed earlier pin can still override sticky selection. Background checks no longer create a 30–45-second loop of reloading the same stream and resetting its stall samples.
+- One lost watch heartbeat no longer discards the observation window. Two consecutive failed heartbeats still trigger connection recovery; successful heartbeats reset the failure streak. Repeated isolated errors therefore do not disable stall detection indefinitely.
+
+### Twitch authorization
+
+- Background API failures now show an authorization notice instead of automatically generating a device code, opening a browser or blocking the application with a modal dialog.
+- The dashboard's Authorize Twitch button starts the flow when the user is ready. A modeless window shows the code and its server-defined remaining lifetime, with Open Twitch, Copy code, Cancel and Get a new code controls.
+- Only one code request can run at a time. Campaign-refresh cancellation does not own the authorization session; closing and reopening the window retains the pending code. Expired codes are renewed only on explicit user action.
+- Successful authorization keeps the existing encrypted token storage and refreshes Twitch campaigns. Startup validation retries pause while the regular Twitch login window is open, and duplicate login windows are prevented.
+- Added tests for earlier-pin availability, probe throttling, intermittent heartbeats and manual authorization approval, expiration, cancellation and single-flight behavior.
+
 ## [1.1.23] — 2026-10-06
 
 ### Connection recovery

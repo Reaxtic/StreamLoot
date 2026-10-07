@@ -1,7 +1,7 @@
 {
-  "version": "1.1.23",
+  "version": "1.1.24",
   "type": "Patch",
-  "changelog": "Twitch connection errors no longer count as stalled channels. Recovery discards old samples and allows a 3-minute grace period before fresh observations. Windows autostart uses a delayed user-logon task with registry fallback and bounded startup validation retries. Includes previously local fixes for confirmed badge claims, campaign backoff, Kick stream selection and watchdog deadlines.",
+  "changelog": "Earlier Twitch pins are probed every three minutes and resume only after live eligibility is confirmed, preventing repeated stream reloads. Isolated lost heartbeats no longer disable stall detection. Device authorization is user-started with a persistent window, countdown, copy/open controls and manual retry; campaign refreshes do not cancel it.",
   "historic_versions": [
     {
       "version": "1.1.10",

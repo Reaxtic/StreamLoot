@@ -326,100 +326,23 @@ namespace Core.Services
             }
         }
 
-        private static async Task<string?> AcquireTwitchDeviceTokenAsync(CancellationToken ct)
+        private readonly TwitchDeviceAuthorizationFlow _deviceAuthorization = new(AndroidClientId);
+        public TwitchDeviceAuthorizationFlow DeviceAuthorization => _deviceAuthorization;
+        private readonly SemaphoreSlim _deviceAuthorizationSaveLock = new(1, 1);
+
+        public async Task<bool> AuthorizeDeviceAsync()
         {
-            using HttpClient client = new(new HttpClientHandler
+            string? token = await _deviceAuthorization.StartAsync();
+            if (string.IsNullOrWhiteSpace(token)) return false;
+            await _deviceAuthorizationSaveLock.WaitAsync();
+            try
             {
-                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
-            })
-            {
-                Timeout = TimeSpan.FromSeconds(30)
-            };
-            client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", AndroidUserAgent);
-            client.DefaultRequestHeaders.TryAddWithoutValidation("Client-ID", AndroidClientId);
-
-            using FormUrlEncodedContent deviceContent = new(new Dictionary<string, string>
-            {
-                ["client_id"] = AndroidClientId,
-                ["scopes"] = string.Empty
-            });
-            using HttpResponseMessage deviceResponse = await client.PostAsync("https://id.twitch.tv/oauth2/device", deviceContent, ct);
-            string deviceJson = await deviceResponse.Content.ReadAsStringAsync(ct);
-            if (!deviceResponse.IsSuccessStatusCode)
-            {
-                JsonNode? errorResponse = JsonNode.Parse(deviceJson);
-                string error = errorResponse?["error"]?.ToString()
-                    ?? errorResponse?["message"]?.ToString()
-                    ?? errorResponse?["error_description"]?.ToString()
-                    ?? "unknown";
-                AppLogger.Warn("TwitchGql", $"Twitch device-code request failed. status={(int)deviceResponse.StatusCode}, error={error}.");
+                SaveTwitchDeviceToken(token);
+                await ConfigureAndroidCompatibilityAsync(token);
+                AppLogger.Info("TwitchGql", "User-requested device authorization completed; token stored securely.");
+                return true;
             }
-            deviceResponse.EnsureSuccessStatusCode();
-
-            JsonNode device = JsonNode.Parse(deviceJson)
-                ?? throw new InvalidOperationException("Twitch device authorization returned an empty response.");
-            string deviceCode = device["device_code"]?.GetValue<string>()
-                ?? throw new InvalidOperationException("Twitch device authorization did not return a device code.");
-            string userCode = device["user_code"]?.GetValue<string>()
-                ?? throw new InvalidOperationException("Twitch device authorization did not return a user code.");
-            string verificationUri = device["verification_uri"]?.GetValue<string>()
-                ?? "https://www.twitch.tv/activate";
-            int intervalSeconds = Math.Max(5, device["interval"]?.GetValue<int>() ?? 5);
-            int expiresInSeconds = Math.Clamp(device["expires_in"]?.GetValue<int>() ?? 900, 60, 1800);
-
-            string separator = verificationUri.Contains('?') ? "&" : "?";
-            string authorizationUrl = verificationUri.Contains("device-code=", StringComparison.OrdinalIgnoreCase)
-                ? verificationUri
-                : verificationUri + separator + "device-code=" + Uri.EscapeDataString(userCode);
-
-            AppLogger.Info("TwitchGql", "Twitch device authorization is required; opening the official activation page.");
-            Process.Start(new ProcessStartInfo(authorizationUrl) { UseShellExecute = true });
-            await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
-                System.Windows.MessageBox.Show(
-                    $"Twitch wymaga jednorazowego zatwierdzenia urządzenia.\n\nKod: {userCode}\n\nW otwartej przeglądarce zatwierdź dostęp. Stream Loot będzie czekał na potwierdzenie.",
-                    "Stream Loot — autoryzacja Twitch",
-                    System.Windows.MessageBoxButton.OK,
-                    System.Windows.MessageBoxImage.Information));
-
-            DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(expiresInSeconds);
-            while (DateTimeOffset.UtcNow < deadline)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(intervalSeconds), ct);
-                using FormUrlEncodedContent tokenContent = new(new Dictionary<string, string>
-                {
-                    ["client_id"] = AndroidClientId,
-                    ["device_code"] = deviceCode,
-                    ["grant_type"] = "urn:ietf:params:oauth:grant-type:device_code"
-                });
-                using HttpResponseMessage tokenResponse = await client.PostAsync("https://id.twitch.tv/oauth2/token", tokenContent, ct);
-                string tokenJson = await tokenResponse.Content.ReadAsStringAsync(ct);
-                JsonNode? tokenResult = JsonNode.Parse(tokenJson);
-                if (tokenResponse.IsSuccessStatusCode)
-                {
-                    string token = tokenResult?["access_token"]?.GetValue<string>()
-                        ?? throw new InvalidOperationException("Twitch approved the device but returned no access token.");
-                    SaveTwitchDeviceToken(token);
-                    AppLogger.Info("TwitchGql", "Twitch device authorization completed and was stored securely for this Windows user.");
-                    return token;
-                }
-
-                string? error = tokenResult?["error"]?.GetValue<string>();
-                if (string.Equals(error, "authorization_pending", StringComparison.OrdinalIgnoreCase))
-                    continue;
-                if (string.Equals(error, "slow_down", StringComparison.OrdinalIgnoreCase))
-                {
-                    intervalSeconds += 5;
-                    continue;
-                }
-                if (string.Equals(error, "access_denied", StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("Twitch device authorization was denied.");
-                if (string.Equals(error, "expired_token", StringComparison.OrdinalIgnoreCase))
-                    break;
-
-                throw new InvalidOperationException($"Twitch device authorization failed: {error ?? tokenResponse.StatusCode.ToString()}.");
-            }
-
-            throw new TimeoutException("Twitch device authorization expired before it was approved.");
+            finally { _deviceAuthorizationSaveLock.Release(); }
         }
 
         /// <summary>
@@ -1075,30 +998,8 @@ namespace Core.Services
                         }
                     }
 
-                    string? deviceToken = await AcquireTwitchDeviceTokenAsync(ct);
-                    if (!string.IsNullOrWhiteSpace(deviceToken))
-                    {
-                        await ConfigureAndroidCompatibilityAsync(deviceToken);
-                        using HttpRequestMessage authorizedRequest = new(HttpMethod.Post, "https://gql.twitch.tv/gql")
-                        {
-                            Content = JsonContent.Create(payload)
-                        };
-                        authorizedRequest.Headers.TryAddWithoutValidation("Client-ID", AndroidClientId);
-                        authorizedRequest.Headers.TryAddWithoutValidation("Authorization", _accessToken);
-                        if (!string.IsNullOrEmpty(_deviceId))
-                            authorizedRequest.Headers.TryAddWithoutValidation("X-Device-Id", _deviceId);
-
-                        using HttpResponseMessage authorizedResponse = await _httpClient.SendAsync(authorizedRequest, ct);
-                        string authorizedJson = await authorizedResponse.Content.ReadAsStringAsync(ct);
-                        if (authorizedResponse.IsSuccessStatusCode && !authorizedJson.Contains("\"errors\""))
-                        {
-                            LastDashboardFetchFailed = false;
-                            AppLogger.Info("TwitchGql", "Dashboard request succeeded after Twitch device authorization.");
-                            return JsonNode.Parse(authorizedJson)!.AsArray();
-                        }
-
-                        AppLogger.Warn("TwitchGql", $"Authorized Smart TV dashboard request failed. status={(int)authorizedResponse.StatusCode}, hasErrors={authorizedJson.Contains("\"errors\"")}.");
-                    }
+                    _deviceAuthorization.RequireAuthorization();
+                    AppLogger.Warn("TwitchGql", "Authorization may be required; waiting for the user's explicit action.");
 
                     LastDashboardFetchFailed = true;
                     throw new InvalidOperationException("Failed integrity, please wait a while and try again.");
@@ -1497,6 +1398,8 @@ namespace Core.Services
 
         public void Dispose()
         {
+            _deviceAuthorization.Dispose();
+            _deviceAuthorizationSaveLock.Dispose();
             _httpClient.Dispose();
             _headerRefreshLock.Dispose();
         }

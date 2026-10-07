@@ -41,6 +41,13 @@ namespace UI.Views
         private HiddenWebViewHost _twitchWebView = new();
         private HiddenWebViewHost _kickWebView = new();
         private TwitchGqlService? _twitchGqlService;
+        private TwitchAuthorizationWindow? _authorizationWindow;
+        private TwitchLoginWindow? _interactiveTwitchLoginWindow;
+        public Visibility TwitchAuthorizationVisibility => _twitchGqlService?.DeviceAuthorization.State.Stage
+            is TwitchAuthorizationStage.Required or TwitchAuthorizationStage.Requesting or TwitchAuthorizationStage.Waiting
+                or TwitchAuthorizationStage.Expired or TwitchAuthorizationStage.Cancelled or TwitchAuthorizationStage.Failed
+            ? Visibility.Visible : Visibility.Collapsed;
+        public string TwitchAuthorizationMessage => Loc.Instance["Auth.Required"];
 
         private static bool _initialValidationCompleted = false;
         private static bool _isInitialized = false;
@@ -357,6 +364,11 @@ namespace UI.Views
             _dropsService = new DropsService();
 
             _twitchGqlService = new TwitchGqlService(_twitchWebView);
+            _twitchGqlService.DeviceAuthorization.StateChanged += state => Dispatcher.InvokeAsync(() =>
+            {
+                OnPropertyChanged(nameof(TwitchAuthorizationVisibility));
+                OnPropertyChanged(nameof(TwitchAuthorizationMessage));
+            });
 
             // Subscribe to progress updates ===
             DropsInventoryManager.Instance.TwitchProgressChanged += (campPct, dropPct) =>
@@ -761,7 +773,7 @@ namespace UI.Views
         {
             // Validate sequentially: the two WebViews share a CDP/WebView2 environment and running both
             // credential checks concurrently raced (intermittently both returned "not logged in").
-            if (_twitchService.Status != ConnectionStatus.Connected)
+            if (_twitchService.Status != ConnectionStatus.Connected && _interactiveTwitchLoginWindow == null)
                 try { await ValidateTwitchCredentialsAsync(); }
                 catch (Exception ex) { AppLogger.Warn("Autostart", $"Twitch validation will be retried: {ex.Message}"); }
 
@@ -898,11 +910,24 @@ namespace UI.Views
         /// <param name="e">The event data associated with the click event.</param>
         private void OnTwitchLoginClick(object sender, RoutedEventArgs e)
         {
+            if (_interactiveTwitchLoginWindow != null) { _interactiveTwitchLoginWindow.Activate(); return; }
             // Non-modal so the Twitch and Kick login windows can be open at the same time (log in to both in
             // parallel instead of one-after-another). Re-validate once this window is closed.
             TwitchLoginWindow window = new TwitchLoginWindow();
-            window.Closed += async (_, _) => await ValidateTwitchCredentialsAsync();
+            _interactiveTwitchLoginWindow = window;
+            window.Closed += async (_, _) => { _interactiveTwitchLoginWindow = null; await ValidateTwitchCredentialsAsync(); };
             window.Show();
+        }
+
+        private void OnAuthorizeTwitchClick(object sender, RoutedEventArgs e)
+        {
+            if (_twitchGqlService == null) return;
+            if (_authorizationWindow != null) { _authorizationWindow.Activate(); return; }
+            _authorizationWindow = new TwitchAuthorizationWindow(_twitchGqlService)
+                { Owner = System.Windows.Application.Current.MainWindow };
+            _authorizationWindow.AuthorizationCompleted += () => ScheduleDropsLoad(Platform.Twitch);
+            _authorizationWindow.Closed += (_, _) => _authorizationWindow = null;
+            _authorizationWindow.Show();
         }
         #endregion
     }

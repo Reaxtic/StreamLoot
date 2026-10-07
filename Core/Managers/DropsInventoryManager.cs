@@ -123,6 +123,7 @@ namespace Core.Managers
         private DateTime _twitchPinSuspendedAt = DateTime.MinValue;
         private DateTime _kickPinSuspendedAt = DateTime.MinValue;
         private DateTime _lastPinOnlineCheck = DateTime.MinValue;
+        private string? _confirmedTwitchPinReturn;
         private DateTime _lastGamePriorityCheck = DateTime.MinValue;
 
         private bool IsPinSuspended(Platform platform) => platform == Platform.Twitch ? _twitchPinSuspended : _kickPinSuspended;
@@ -491,7 +492,8 @@ namespace Core.Managers
                     if (campaignId != null && _currentTwitchCampaign?.Id == campaignId && _currentTwitchLogin == login)
                     {
                         if (accepted) RecordTwitchConnectionSuccess(campaignId);
-                        else RecordTwitchConnectionFailure(campaignId);
+                        else if (_twitchConnectionRecovery.RecordHeartbeatFailure(campaignId))
+                            RecordTwitchConnectionFailure(campaignId);
                     }
                 }
             }
@@ -2111,9 +2113,9 @@ namespace Core.Managers
                         // A SUSPENDED pin (streamers offline, mining a fallback) does not count — the fallback
                         // stream should be held steady until the health check brings the pin back.
                         string? twitchPinForKeep = ActivePinFor(Platform.Twitch);
-                        bool forcedToOther = twitchPinForKeep != null
-                            && !_twitchPinSuspended
-                            && !string.Equals(twitchPinForKeep, _currentTwitchCampaign?.Id, StringComparison.Ordinal);
+                        bool forcedToOther = TwitchPinResumePolicy.PinRequiresSelection(twitchPinForKeep,
+                            _currentTwitchCampaign?.Id, IsQueuedPin(_currentTwitchCampaign?.Id ?? ""),
+                            _twitchPinSuspended, _confirmedTwitchPinReturn != null);
 
                         // Don't keep a campaign that was flagged as not actually crediting (server frozen while
                         // watched) — otherwise keep-current would silently re-pin it and the auto stall-skip never
@@ -2188,7 +2190,7 @@ namespace Core.Managers
                         // If the user just picked a specific channel, select that channel's campaign first so the
                         // pick isn't lost to a higher-priority campaign that happens to rank above it.
                         string? forcedTwitchCampId;
-                        lock (_lastStreamerSync) { forcedTwitchCampId = _forcedTwitchStreamer?.CampaignId; }
+                        lock (_lastStreamerSync) { forcedTwitchCampId = _forcedTwitchStreamer?.CampaignId ?? _confirmedTwitchPinReturn; }
 
                         // Sticky selection: a user-forced channel wins; otherwise prefer the campaign we're already
                         // watching (if it's still a candidate) so we don't needlessly jump to a different campaign
@@ -2685,6 +2687,7 @@ namespace Core.Managers
             }
             finally
             {
+                if (onlyPlatform != Platform.Kick) _confirmedTwitchPinReturn = null;
                 _startWatchingLock.Release();
             }
         }
@@ -2931,8 +2934,8 @@ namespace Core.Managers
                     // lift the suspension and re-evaluate the pin's platform so mining returns to the user's choice.
                     bool pinResumeTwitch = false;
                     bool pinResumeKick = false;
-                    bool pinCheckDue = (DateTime.Now - _lastPinOnlineCheck) > TimeSpan.FromMinutes(3);
-                    if (pinCheckDue && (_twitchPinSuspended || _kickPinSuspended))
+                    bool pinCheckDue = TwitchPinResumePolicy.ProbeDue(DateTime.Now, _lastPinOnlineCheck);
+                    if (pinCheckDue)
                         _lastPinOnlineCheck = DateTime.Now;
 
                     foreach (Platform platform in new[] { Platform.Twitch, Platform.Kick })
@@ -2956,15 +2959,17 @@ namespace Core.Managers
 
                             // While suspended, only re-probe on the throttle; otherwise (pin drifted away) go back now.
                             bool suspended = IsPinSuspended(platform);
-                            if (suspended && !pinCheckDue)
+                            if (!pinCheckDue)
                                 break;
-                            if (suspended && !await PinnedCampaignHasLiveChannelAsync(pinned))
-                                continue;
+                            bool allowed = UISettingsManager.Instance.IsCampaignAllowedByWhitelist(pinned);
+                            if (!allowed) continue;
+                            bool live = await PinnedCampaignHasLiveChannelAsync(pinned);
+                            if (!TwitchPinResumePolicy.ResumeAllowed(pinCheckDue, allowed, live)) continue;
 
                             AppLogger.Info("Selection", suspended
                                 ? $"Pinned campaign '{pinned.Name}' has a live streamer again — returning to it."
                                 : $"Pinned campaign '{pinned.Name}' has progress to make but isn't being mined — returning to it.");
-                            if (platform == Platform.Twitch) { _twitchPinSuspended = false; pinResumeTwitch = true; }
+                            if (platform == Platform.Twitch) { _confirmedTwitchPinReturn = pinned.Id; _twitchPinSuspended = false; pinResumeTwitch = true; }
                             else { _kickPinSuspended = false; pinResumeKick = true; }
                             break;
                         }

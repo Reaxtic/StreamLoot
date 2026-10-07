@@ -54,6 +54,7 @@ Call("TrackCampaignCrediting", campaign.Id, Platform.Twitch, 93);
 Check(!samples.ContainsKey(campaign.Id), "recovery grace prevents immediate false rejection in real manager");
 Check(!policy.IsChannelStalled(campaign.Id, "test-channel", DateTime.Now), "transport failure does not penalize campaign channel");
 Console.WriteLine("All integration tests passed.");
+await TwitchAuthorizationRegression.Run();
 
 sealed class FakeDirectoryHandler(bool fail) : HttpMessageHandler
 {

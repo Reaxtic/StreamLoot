@@ -96,3 +96,21 @@ Check(StartupTaskPolicy.Arguments(false) == "--autostart", "normal startup does 
 Check(Value("ExecutionTimeLimit") == "PT0S", "scheduler cannot stop mining at its default time limit");
 Check(Value("DisallowStartIfOnBatteries") == "false" && Value("StopIfGoingOnBatteries") == "false", "battery power does not block or stop startup");
 Console.WriteLine("All connection recovery and startup task tests passed.");
+
+Check(!TwitchPinResumePolicy.PinRequiresSelection("wolvesville", "quinfall", true, false, false), "unavailable earlier pin cannot disrupt watched pin #2");
+Check(TwitchPinResumePolicy.PinRequiresSelection("wolvesville", "quinfall", true, false, true), "confirmed live earlier pin overrides sticky selection");
+Check(TwitchPinResumePolicy.PinRequiresSelection("wolvesville", "fallback", false, false, false), "manual pin still overrides unpinned fallback");
+Check(!TwitchPinResumePolicy.ProbeDue(now.AddSeconds(31), now), "earlier pin is not rechecked every health tick");
+Check(TwitchPinResumePolicy.ProbeDue(now.AddMinutes(3), now), "earlier pin is checked after three minutes");
+Check(!TwitchPinResumePolicy.ResumeAllowed(true, true, false), "offline earlier pin cannot trigger selection");
+Check(!TwitchPinResumePolicy.ResumeAllowed(true, false, true), "excluded pin cannot trigger selection");
+Check(TwitchPinResumePolicy.ResumeAllowed(true, true, true), "available permitted pin can resume");
+var heartbeats = new TwitchConnectionRecoveryPolicy();
+for (int i = 0; i < 5; i++)
+{
+    Check(!heartbeats.RecordHeartbeatFailure("intermittent"), "single lost heartbeat does not restart recovery grace");
+    heartbeats.RecordSuccess("intermittent", now);
+    Check(heartbeats.CanObserveStall("intermittent", now), "intermittent errors do not disable stall detection forever");
+}
+Check(!heartbeats.RecordHeartbeatFailure("outage"), "first failed heartbeat can be transient");
+Check(heartbeats.RecordHeartbeatFailure("outage"), "consecutive heartbeat failures signal connection outage");

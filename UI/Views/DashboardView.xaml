@@ -225,6 +225,10 @@
                             </Button.Template>
                         </Button>
                     </StackPanel>
+                    <TextBlock Text="{Binding TwitchAuthorizationMessage}" Visibility="{Binding TwitchAuthorizationVisibility}"
+                               Foreground="#FFB020" MaxWidth="360" TextWrapping="Wrap" Margin="0,10,0,5"/>
+                    <Button Content="{loc:T Auth.Start}" Click="OnAuthorizeTwitchClick" Padding="14,7"
+                            HorizontalAlignment="Right" Margin="0,8,0,0"/>
                 </StackPanel>
             </Grid>
         </Border>

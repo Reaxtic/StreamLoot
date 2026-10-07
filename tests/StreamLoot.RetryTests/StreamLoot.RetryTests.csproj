@@ -10,5 +10,6 @@
     <Compile Include="../../Core/Services/TwitchClaimRecoveryPolicy.cs" Link="TwitchClaimRecoveryPolicy.cs" />
     <Compile Include="../../Core/Managers/TwitchConnectionRecoveryPolicy.cs" Link="TwitchConnectionRecoveryPolicy.cs" />
     <Compile Include="../../Core/Services/StartupTaskPolicy.cs" Link="StartupTaskPolicy.cs" />
+    <Compile Include="../../Core/Managers/TwitchPinResumePolicy.cs" Link="TwitchPinResumePolicy.cs" />
   </ItemGroup>
 </Project>
