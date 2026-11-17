@@ -1,141 +1,126 @@
 <div align="center">
 
-<img src="Github-Assets/logo.png" width="96" alt="Stream Loot logo"/>
+<img src="Github-Assets/logo.png" width="80" alt="Stream Loot gift-box logo"/>
 
-# Stream Loot
+# Stream Loot — Twitch & Kick Drops Miner for Windows
 
-**Set‑and‑forget drops miner for Twitch & Kick.**
-Stream Loot watches the right streams in the background, tracks every active drop campaign in real time, and claims your rewards automatically — on **both platforms at once**.
+**A free, open-source desktop app for tracking Twitch Drops and Kick Drops, prioritizing games and automatically attempting reward claims.**
 
-[![License](https://img.shields.io/github/license/Reaxtic/StreamLoot?color=22D3EE)](LICENSE)
-[![.NET](https://img.shields.io/badge/.NET-10.0-22D3EE)](https://dotnet.microsoft.com/download)
-[![Platform](https://img.shields.io/badge/Windows-10%20%2F%2011-22D3EE)](#requirements)
-[![Stars](https://img.shields.io/github/stars/Reaxtic/StreamLoot?style=social)](https://github.com/Reaxtic/StreamLoot/stargazers)
+[**Download for Windows**](https://github.com/Reaxtic/StreamLoot/releases/latest) · [Getting started](#getting-started) · [FAQ](#faq) · [Po polsku](README.pl.md)
 
-> Fork of [**Stream Drop Collector** by Marcus Jensen (tsgsOFFICIAL)](https://github.com/tsgsOFFICIAL/StreamDropCollector), used under the MIT License — heavily reworked for performance, reliability, multi‑campaign tracking and a redesigned UI. See [LICENSE](LICENSE).
+[![Latest release](https://img.shields.io/github/v/release/Reaxtic/StreamLoot?label=Download&color=22D3EE)](https://github.com/Reaxtic/StreamLoot/releases/latest)
+[![MIT license](https://img.shields.io/github/license/Reaxtic/StreamLoot?color=22D3EE)](LICENSE)
+[![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-22D3EE)](#requirements)
+[![Release checks](https://github.com/Reaxtic/StreamLoot/actions/workflows/release.yml/badge.svg)](https://github.com/Reaxtic/StreamLoot/actions/workflows/release.yml)
+[![GitHub stars](https://img.shields.io/github/stars/Reaxtic/StreamLoot?style=social)](https://github.com/Reaxtic/StreamLoot/stargazers)
+
+If Stream Loot is useful to you, **[star the repository](https://github.com/Reaxtic/StreamLoot)** to bookmark it and help other players discover it. No subscription or paid unlock is required.
 
 </div>
 
----
+![Current Stream Loot dashboard showing separate Twitch and Kick campaign progress with illustrative demo data](Github-Assets/dashboard-current.png)
 
-## ✨ Why Stream Loot?
+*Current interface, rendered with illustrative data. Example channels and progress are not a live mining result or a promise of rewards.*
 
-- 🎮 **Twitch _and_ Kick at the same time** — mine drops on both platforms simultaneously, fully automatic.
-- 🧠 **Smart selection** — automatically picks the best campaign + a live participating streamer, including general/category drops.
-- 🪙 **Auto‑claim** — finished rewards are claimed within seconds, not on a slow timer.
-- 👀 **See everything you earn** — live progress bars per campaign **and** per drop, plus an **"Also earning on this channel"** list that shows every other campaign filling up at the same time.
-- 🎯 **Manual control when you want it** — pin a campaign with **Mine this**, **switch streamer**, or set a **specific channel** (with a built‑in live/eligibility check).
-- 🟢 **Live status** — see at a glance whether the watched streamer is online, and which campaign is general vs. channel‑specific.
-- 🧹 **Game priorities and exclusions** — order preferred games separately for Twitch and Kick, with automatic fallback to other available games. Explicit exclusions always take precedence.
-- 🪶 **Lightweight & quiet** — forces lowest stream quality, handles mature‑content gates, runs happily in the background or system tray.
-- 📋 **Copy game names** — click a game title in inventory to copy its full name and look up the game elsewhere. Hovering underlines the title and shows a hint; no separate Copy button is needed.
-- 🎨 **Modern UI** — clean dark theme, cyan accent, rounded cards, responsive layout.
+## What is Stream Loot?
 
----
+Stream Loot is a Twitch and Kick drops miner built in C# with .NET and WebView2. It runs on your Windows computer, finds eligible live channels, watches in the background and periodically reconciles progress with the platforms. Twitch and Kick are handled separately, so you can work toward drops on both platforms at the same time.
 
-## 📸 Screenshots
+The project is a fork of [Stream Drop Collector](https://github.com/tsgsOFFICIAL/StreamDropCollector) by Marcus Jensen, with a redesigned interface and changes to campaign selection, progress tracking and recovery. It is distributed under the [MIT License](LICENSE), with the original copyright and attribution retained.
 
-Full development history in Polish: [Historia zmian — 1.1.0–1.1.18](docs/HISTORIA_ZMIAN_PL.md).
+## Why use it?
 
-| Dashboard | Inventory |
-|---|---|
-| ![Dashboard](Github-Assets/dashboard.png) | ![Inventory](Github-Assets/inventory.png) |
+- **Twitch and Kick in one app.** Separate campaign progress, watched channels and reward status for each platform.
+- **Game priorities, not a rigid allow-list.** Put Rust before AirMech, for example. Unavailable priorities allow fallback; explicit game exclusions take precedence.
+- **Pin a specific campaign.** An available manual pin takes precedence over game preferences. Offline pins do not need to block all other work.
+- **Server-reconciled progress and automatic claim attempts.** A playing video or successful watch request is not treated as proof that a reward was credited or claimed.
+- **Inventory controls.** Hide Twitch or Kick visually, filter claimed rewards, exclude games from campaign cards and click a game name to copy it.
+- **Background recovery.** Playback checks, sleep/resume recovery and watchdog logic help recover interrupted sessions. They cannot guarantee continuous earning.
+- **Free software, MIT licensed.** Read the source, modify it or redistribute it under the license terms. No subscription is required.
 
-| Settings |
-|---|
-| ![Settings](Github-Assets/settings.png) |
+![Current Stream Loot inventory with Twitch and Kick rewards, manual pin and game-priority labels, using illustrative data](Github-Assets/inventory-current.png)
 
----
+*Illustrative inventory data. Placeholder artwork explains the interface; campaigns shown here are not an availability list.*
 
-## 🚀 Quick start
+## Getting started
 
-1. **Download** the latest release from the [**Releases**](https://github.com/Reaxtic/StreamLoot/releases/latest) page.
-2. **Extract** the ZIP anywhere.
-3. Run **`Stream Loot.exe`**.
-4. Click **Login Twitch** / **Login Kick** and sign in inside the embedded browser windows.
-5. That's it — Stream Loot starts mining and claiming automatically. 🎉
+1. Open the [latest Windows release](https://github.com/Reaxtic/StreamLoot/releases/latest).
+2. Under **Assets**, download `StreamLoot-vX.Y.Z.zip`, not the GitHub-generated source archives.
+3. Extract the ZIP to a writable folder and run **`Stream Loot.exe`**.
+4. Sign in to Twitch and/or Kick in the embedded browser. Complete any authentication prompt yourself.
+5. Set game priorities and exclusions in Settings, or pin a campaign from Inventory.
 
-> Self‑contained build — no .NET install required.
+The release is self-contained: a separate .NET installation is not required. [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) is required for the embedded browser. Keep the computer awake and connected to the internet while mining.
 
----
+**Download only from [this repository's Releases page](https://github.com/Reaxtic/StreamLoot/releases).** There is no official paid edition or requirement to buy a license key.
 
-## 🧩 How it works
+## Requirements
 
-Stream Loot uses an embedded **WebView2** browser (the same engine as Edge) to log you in and read Twitch's GraphQL API + Kick's drops API directly:
+- Windows 10 or 11, 64-bit, with Microsoft Edge WebView2 Runtime.
+- A Twitch account, a Kick account, or both, with any required authentication completed.
+- An active, eligible drop campaign and a qualifying live channel.
+- Internet access and an awake computer. A tray icon does not mean the app can earn while Windows is asleep.
 
-1. Fetches your active drop campaigns from both platforms.
-2. Picks the highest‑priority campaign and a **live** streamer that actually participates in it.
-3. Watches at the lowest quality in the background. Because one stream credits **every** eligible campaign for that game, the dashboard shows all of them progressing together.
-4. Reconciles real progress with the servers periodically and **claims** rewards the moment they're complete.
+The current app is Windows-only. There is no supported Linux, macOS, Docker or headless server build.
 
-Twitch and Kick are handled **independently** — finishing or switching on one platform never disrupts the other.
+## FAQ
 
-### Mining preferences
+### Is Stream Loot free? What does the MIT License allow?
 
-Excluded games are never selected, including pinned campaigns for those games. An available pinned campaign takes precedence over automatic game preferences. Otherwise, games are considered in the order configured in Settings: for example, Rust before AirMech. An unavailable preferred game does not block lower priorities or unlisted games. The miner checks for returning higher-priority games approximately every three minutes.
+Yes. The MIT License permits use, modification and redistribution, including commercial use, subject to its terms. Copies must retain the copyright and permission notice. The software comes without warranty. See the complete [LICENSE](LICENSE).
 
-Within the selected game priority, partially progressed rewards are preferred by the remaining time to the next drop. Twitch progress is reconciled with the server; a successful watch request is not itself proof that a minute was credited. Completed drops are tracked in a persistent local claim ledger.
+### Can it earn Twitch Drops and Kick Drops simultaneously?
 
-The game lists support search, hiding excluded games, ordering with up/down arrows, and independent height adjustment using the handle below each list. List heights are restored after restart.
+It can run one watched channel per platform independently. Which rewards count, when progress appears and whether a claim succeeds are determined by Twitch, Kick and the campaign rules.
 
----
+### Do I need to link my game account?
 
-## 🛠️ Build from source
+Check the campaign requirements. Some campaigns allow watch progress before a publisher account is linked, but claiming or receiving the reward may still require linking. Stream Loot does not bypass that requirement.
 
-Requires the [**.NET 10 SDK**](https://dotnet.microsoft.com/download) (Windows desktop workload).
+### Why is a drop not progressing?
 
-```bash
+Possible causes include an ineligible channel, an ended campaign, a disconnected session, paused playback, network problems or delayed platform reporting. Check the platform's own inventory first. If it also shows no progress, a moving player in Stream Loot is not evidence that minutes are being credited. [Report a reproducible issue](https://github.com/Reaxtic/StreamLoot/issues/new/choose) with the app version and redacted diagnostics.
+
+### What wins: exclusions, pins or game priorities?
+
+Exclusions win. Next come available manually pinned campaigns, followed by the configured game order and then other allowed campaigns. Unavailable choices permit fallback. Within a game-priority level, partially progressed rewards can be preferred by time remaining to the next drop.
+
+### Does it work minimized, with a locked PC, or after sleep?
+
+It is designed to run in the background while Windows remains awake and connected. Sleep suspends earning. Resume recovery is implemented, but browser sessions, drivers, remote-desktop changes and network conditions can still interrupt playback. Verify progress on the platforms rather than relying only on the app's Mining label.
+
+### Where are my login sessions and settings stored?
+
+The app uses local WebView2 browser profiles and local files, including `%APPDATA%\Stream Loot`. Login requests go to the respective platform. Update checks and downloads contact GitHub, and browser pages can load their own service and media domains. This is not an offline app.
+
+Treat the entire WebView2 profile, saved tokens and diagnostic logs as sensitive. Never upload your app profile or unredacted logs. More guidance is in [SECURITY.md](SECURITY.md).
+
+### Is it affiliated with Twitch or Kick? Is automated viewing allowed?
+
+No affiliation, endorsement or guarantee is implied. Automated viewing may conflict with platform terms or campaign rules. Review the rules relevant to your accounts and use the app at your own risk. MIT licensing does not grant platform permission or guarantee account safety.
+
+## Help improve Stream Loot
+
+If the project helps you, [give it a GitHub star](https://github.com/Reaxtic/StreamLoot), share the repository with someone who needs it, or [report a bug](https://github.com/Reaxtic/StreamLoot/issues/new/choose). Useful reports and reproducible fixes are more valuable than inflated star counts.
+
+Want to contribute code or documentation? Read [CONTRIBUTING.md](CONTRIBUTING.md). Want to share it in a community? The [promotion kit](docs/PROMOTION.md) contains short English and Polish descriptions, artwork and disclosure guidance. Follow each community's rules; do not spam or trade stars.
+
+## Build from source
+
+Install the [.NET 10 SDK](https://dotnet.microsoft.com/download) on Windows, then:
+
+```powershell
 git clone https://github.com/Reaxtic/StreamLoot.git
 cd StreamLoot
 dotnet publish UI/UI.csproj -c Release -r win-x64 --self-contained true
 ```
 
-Output: `UI/bin/Release/net10.0-windows10.0.17763.0/win-x64/publish/` → run `Stream Loot.exe`.
+Output: `UI/bin/Release/net10.0-windows10.0.17763.0/win-x64/publish/`.
 
----
+## License and credits
 
-## 🔒 Privacy & safety
+[MIT License](LICENSE). Original Stream Drop Collector © Marcus Jensen (tsgsOFFICIAL); Stream Loot modifications © Reaxtic. Keep these notices when redistributing the code.
 
-- Logins happen **only** inside the embedded WebView2 browser — same as logging in via Edge/Chrome.
-- Your credentials and session **never leave your machine** and are never sent to any third party.
-- Network traffic goes **only** to Twitch.tv and Kick.com.
-- All settings, logs and cache live locally in `%APPDATA%\Stream Loot`.
+The Twitch watch-signal approach and channel-picker ideas were informed by [TwitchDropsMiner](https://github.com/DevilXD/TwitchDropsMiner) by DevilXD. This project is a separate C#/.NET implementation, not a drop-in replacement or affiliated release.
 
-> Sharing the app folder? Delete the `Stream Loot.exe.WebView2` folder first — it holds **your** login session.
-
----
-
-## ⚙️ Requirements
-
-- Windows 10 / 11 (64‑bit)
-- A Twitch and/or Kick account
-
----
-
-## ⚠️ Disclaimer
-
-Stream Loot is provided for **personal use** and for educational purposes. Automated viewing may conflict with the Terms of Service of Twitch and/or Kick — **use it at your own risk**. This project is **not affiliated with, endorsed by, or sponsored by** Twitch, Kick, or any game publisher. All trademarks and reward artwork belong to their respective owners.
-
----
-
-## 🤝 Contributing
-
-Issues and pull requests are welcome — bug reports, ideas, and improvements all help.
-
----
-
-## 📜 License & credits
-
-Released under the [**MIT License**](LICENSE).
-
-Stream Loot is a fork of **Stream Drop Collector** by **Marcus Jensen (tsgsOFFICIAL)** — full credit to the original author. Modifications © Reaxtic.
-
-**Acknowledgment:** the drop‑crediting approach (Twitch "minute‑watched" events) and the live channel‑picker UX were inspired by [**TwitchDropsMiner** by DevilXD](https://github.com/DevilXD/TwitchDropsMiner) (also MIT‑licensed). No source code was copied — Stream Loot is an independent C#/.NET implementation — but the protocol insight and UX ideas deserve a thank‑you.
-
-See the full release history in [CHANGELOG.md](CHANGELOG.md).
-
-<div align="center">
-
-⭐ **If Stream Loot saves you hours of idle watching, drop a star — it genuinely helps!** ⭐
-
-</div>
+Twitch, Kick, game names and reward artwork belong to their respective owners. See [CHANGELOG.md](CHANGELOG.md) for releases and the [earlier Polish development history](docs/HISTORIA_ZMIAN_PL.md).

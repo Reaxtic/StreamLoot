@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Read the FAQ / Przeczytaj FAQ
+    url: https://github.com/Reaxtic/StreamLoot#faq
+    about: Installation, platform requirements, priorities and progress troubleshooting.

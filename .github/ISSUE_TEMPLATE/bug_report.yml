@@ -1,0 +1,35 @@
+name: Bug report
+description: Report a reproducible Stream Loot problem. Do not share tokens or browser profiles.
+title: "[Bug]: "
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Stream Loot version
+      placeholder: e.g. 1.1.33
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Affected platform
+      options:
+        - Twitch
+        - Kick
+        - Both / application UI
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps, expected behavior and actual result
+      description: Include Windows version and whether the platform's own inventory shows progress. Remove account identifiers and secrets.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I have removed tokens, authentication codes, cookies and browser profiles from this report and its attachments.
+          required: true

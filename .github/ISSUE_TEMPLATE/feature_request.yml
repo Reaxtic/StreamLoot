@@ -1,0 +1,11 @@
+name: Feature request
+description: Suggest a focused improvement to Stream Loot.
+title: "[Idea]: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe your use case and the proposed behavior. Do not include account details.
+    validations:
+      required: true
