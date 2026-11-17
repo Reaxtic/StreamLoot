@@ -18,12 +18,26 @@
 
         <!-- HEADER -->
         <Grid Margin="0,0,0,20">
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
             <TextBlock Text="{loc:T Inv.Title}"
+                   Margin="0,0,24,0"
                    FontSize="30"
                    FontWeight="Bold"
                    HorizontalAlignment="Left"
                    Foreground="{DynamicResource TextPrimaryBrush}"/>
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+            <WrapPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                <Button x:Name="HideTwitchButton" Content="{loc:T Inv.HideTwitch}"
+                        Padding="12,6" Margin="0,4,12,4" VerticalAlignment="Center"
+                        Click="OnHideTwitchClick" Style="{StaticResource AccentButtonStyle}"
+                        ToolTip="{loc:T Inv.PlatformFilterTip}"/>
+                <Button x:Name="HideKickButton" Content="{loc:T Inv.HideKick}"
+                        Padding="12,6" Margin="0,4,12,4" VerticalAlignment="Center"
+                        Click="OnHideKickClick" Style="{StaticResource AccentButtonStyle}"
+                        ToolTip="{loc:T Inv.PlatformFilterTip}"/>
                 <CheckBox x:Name="HideClaimedToggle" Content="{loc:T Inv.HideClaimed}"
                           VerticalAlignment="Center" Margin="0,0,12,0"
                           Foreground="{DynamicResource TextSecondaryBrush}"
@@ -46,13 +60,39 @@
                         Click="OnAutoMineClick"
                         Style="{StaticResource AccentButtonStyle}"
                         ToolTip="{loc:T Inv.AutoMineTip}"/>
-            </StackPanel>
+            </WrapPanel>
+            <TextBlock x:Name="ExclusionNotice" Grid.Row="1" Grid.ColumnSpan="2"
+                       Visibility="Collapsed" Margin="0,8,0,0" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextSecondaryBrush}"/>
         </Grid>
 
         <!-- CAMPAIGNS LIST -->
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-            <ItemsControl ItemsSource="{Binding ActiveCampaigns}">
-                <ItemsControl.ItemTemplate>
+            <ListBox x:Name="CampaignsList" Grid.Row="1"
+                     Background="Transparent" BorderThickness="0" Padding="0"
+                     ScrollViewer.CanContentScroll="True" ScrollViewer.VerticalScrollBarVisibility="Auto"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                     VirtualizingPanel.ScrollUnit="Pixel" VirtualizingPanel.CacheLength="1"
+                     VirtualizingPanel.CacheLengthUnit="Page">
+                <ListBox.ItemsPanel>
+                    <ItemsPanelTemplate><VirtualizingStackPanel/></ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                        <Setter Property="Padding" Value="0"/>
+                        <Setter Property="Margin" Value="0"/>
+                        <Setter Property="Focusable" Value="False"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <ContentPresenter HorizontalAlignment="Stretch"/>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
                     <DataTemplate>
                         <Border Background="{DynamicResource CardBackgroundBrush}"
                                 CornerRadius="16"
@@ -83,10 +123,18 @@
 
                                 <!-- Campaign Info -->
                                 <StackPanel Grid.Column="1" Margin="20,0,0,0" VerticalAlignment="Center">
-                                    <TextBlock Text="{Binding GameName}"
-                                               FontSize="22"
-                                               FontWeight="Bold"
-                                               Foreground="{DynamicResource TextPrimaryBrush}"/>
+                                    <DockPanel LastChildFill="True">
+                                        <Button x:Name="CopyGameNameButton" DockPanel.Dock="Right"
+                                                Content="{loc:T Inv.CopyName}" ToolTip="{loc:T Inv.CopyNameTip}"
+                                                Click="OnCopyGameNameClick" Margin="10,0,0,0" Padding="8,3"
+                                                VerticalAlignment="Center" Style="{StaticResource AccentButtonStyle}"/>
+                                        <TextBox x:Name="GameNameText" Text="{Binding GameName, Mode=OneWay}"
+                                                 Style="{x:Null}" IsReadOnly="True" IsTabStop="False"
+                                                 BorderThickness="0" Padding="0" Background="Transparent"
+                                                 TextWrapping="Wrap" FontSize="22" FontWeight="Bold"
+                                                 Foreground="{DynamicResource TextPrimaryBrush}"
+                                                 ToolTip="{loc:T Inv.CopyNameTip}"/>
+                                    </DockPanel>
 
                                     <TextBlock Text="{Binding Name}"
                                                FontSize="14"
@@ -94,7 +142,7 @@
                                                Margin="0,4,0,10"/>
 
                                     <!-- Platform Badge + End Time + Watching Badge -->
-                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
                                         <!-- Platform Badge - Kick = default (green), Twitch = purple -->
                                         <Border CornerRadius="6" Padding="10,4">
                                             <Border.Style>
@@ -252,6 +300,21 @@
                                                        Foreground="{DynamicResource MainBackgroundBrush}"/>
                                         </Border>
 
+                                        <Border Margin="8,0,0,0" CornerRadius="6" Padding="8,4"
+                                                Background="#164454" ToolTip="{loc:T Inv.GamePriorityTip}">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding GamePriorityOrder}" Value="0">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <TextBlock FontSize="10" FontWeight="Bold" Foreground="#22D3EE"><Run Text="{loc:T Inv.GamePriorityPrefix}"/><Run Text="{Binding GamePriorityOrder}"/></TextBlock>
+                                        </Border>
+
                                         <!-- PINNED Badge -->
                                         <Border Margin="8,0,0,0"
                                                 CornerRadius="6"
@@ -294,7 +357,20 @@
                                                 </Style>
                                             </Button.Style>
                                         </Button>
-                                    </StackPanel>
+                                        <Button x:Name="ExcludeGameButton" Content="{loc:T Inv.ExcludeGame}"
+                                                Margin="8,4,0,4" Padding="10,4" VerticalAlignment="Center"
+                                                Foreground="#FF6B6B" Background="#29222A"
+                                                Click="OnExcludeGameClick" ToolTip="{loc:T Inv.ExcludeGameTip}">
+                                            <Button.Style>
+                                                <Style TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Slug}" Value=""><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                                        <DataTrigger Binding="{Binding Slug}" Value="{x:Null}"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
+                                        </Button>
+                                    </WrapPanel>
                                 </StackPanel>
 
                                 <!-- Rewards List -->
@@ -400,23 +476,26 @@
                             </Grid>
                         </Border>
                     </DataTemplate>
-                </ItemsControl.ItemTemplate>
+                </ListBox.ItemTemplate>
 
                 <!-- EMPTY STATE - 100% SAFE -->
-                <ItemsControl.Style>
-                    <Style TargetType="ItemsControl">
+                <ListBox.Style>
+                    <Style TargetType="ListBox">
                         <Setter Property="Template">
                             <Setter.Value>
-                                <ControlTemplate>
-                                    <ItemsPresenter/>
+                                <ControlTemplate TargetType="ListBox">
+                                    <ScrollViewer CanContentScroll="True" Focusable="False"
+                                                  VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                        <ItemsPresenter/>
+                                    </ScrollViewer>
                                 </ControlTemplate>
                             </Setter.Value>
                         </Setter>
                         <Style.Triggers>
-                            <DataTrigger Binding="{Binding ActiveCampaigns.Count}" Value="0">
+                            <Trigger Property="HasItems" Value="False">
                                 <Setter Property="Template">
                                     <Setter.Value>
-                                        <ControlTemplate>
+                                        <ControlTemplate TargetType="ListBox">
                                             <TextBlock Text="{loc:T Inv.NoCampaigns}"
                                                        FontSize="26"
                                                        Foreground="{DynamicResource TextMutedBrush}"
@@ -425,11 +504,10 @@
                                         </ControlTemplate>
                                     </Setter.Value>
                                 </Setter>
-                            </DataTrigger>
+                            </Trigger>
                         </Style.Triggers>
                     </Style>
-                </ItemsControl.Style>
-            </ItemsControl>
-        </ScrollViewer>
+                </ListBox.Style>
+            </ListBox>
     </Grid>
 </UserControl>

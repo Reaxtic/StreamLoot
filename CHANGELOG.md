@@ -3,6 +3,93 @@
 All notable changes to **Stream Loot** are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.1.32] — 2026-11-17
+
+### Copy game names from inventory
+
+- Game names in inventory can now be selected and copied with Ctrl+C. A Copy button beside each name copies the full game title, not the campaign name, with inline confirmation.
+- Added Polish and English labels and bounded retries when another application temporarily locks the clipboard. Copying does not change mining, pins, priorities or exclusions.
+- This release also includes the previously local 1.1.25–1.1.31 improvements: independent Twitch player/API sessions, playback and resume recovery, live-channel status updates, inventory virtualization, Twitch/Kick visibility filters, one-click game exclusions and corrected game-priority preemption. Details are documented below.
+- Added WPF regression coverage for selectable names, the Copy action and busy-clipboard handling. Tests substitute clipboard writes so the user's clipboard is preserved.
+
+## [1.1.31] — 2026-10-16
+
+### Game-priority preemption
+
+- Fixed Twitch retaining a healthy fallback stream after detecting an available higher-priority game. Selection now targets the confirmed available campaign instead of entering the keep-current branch.
+- Health checks and stream retention share the same priority and availability policy. Offline priorities are skipped; same-rank work remains stable. Available manual pins still take precedence.
+- Apply game exclusions before manual-pin selection and forced-candidate handling, without deleting saved pins or priorities.
+- Show a separate localized game-priority badge in inventory. Game preferences do not create manual campaign pins.
+- Added real-manager regression tests for priority preemption, offline fallback, manual pins, exclusions, cooldowns and platform isolation.
+
+## [1.1.30] — 2026-10-16
+
+### Exclude a game from its inventory card
+
+- Added an Exclude game button beside each campaign. It checks the same platform-specific game exclusion as Settings, persists the choice and triggers the existing debounced mining re-evaluation.
+- Exclusion applies to every campaign for that game on the selected platform only. Existing priorities and pins are retained; exclusion continues to take precedence. Undo by unchecking Exclude in Settings.
+- Added inline confirmation and a scope tooltip; category-less campaigns do not expose a game-exclusion action. Card actions wrap instead of overflowing.
+- Added real WPF button tests covering Settings synchronization, persistence on an isolated test profile, platform isolation, priority preservation, repeated clicks and undo.
+
+## [1.1.29] — 2026-10-16
+
+### Inventory platform filters
+
+- Added independent Hide/Show Twitch and Hide/Show Kick buttons. These are display-only filters and do not pause mining, change priorities, remove campaigns or affect pins.
+- Inventory filtering uses a private collection view and composes with Hide claimed and Only available. Header controls wrap at narrower window widths.
+- Added compiled WPF tests for both platform buttons, combined filters, restoring hidden rows and isolation from the shared mining collection.
+
+## [1.1.28] — 2026-10-16
+
+### Live availability badges
+
+- Inventory availability now refreshes periodically through the existing health loop, not only on opening the inventory or pressing Refresh.
+- Successful selection and live/category health checks immediately update the watched campaign's availability badge. Stale background results cannot overwrite a confirmed live channel with an offline badge; counts retain any additional known live channels.
+- Kick availability uses the same category eligibility as stream selection. Transport failures and missing status entries are unknown, not proof that all streamers are offline.
+- Browser status requests are correlated individually, so concurrent inventory refresh and stream selection cannot consume each other's response.
+- Added regression tests for stale offline badges, failed status lookups and live row updates in the compiled inventory. Mining priorities and progress accounting are unchanged.
+
+## [1.1.27] — 2026-10-16
+
+### Playback recovery and minimized operation
+
+- Hidden browsers no longer belong to the main window, so minimizing it does not minimize their player windows. Closing the main window still shuts down the application.
+- Kick inventory refreshes and credential checks use a separate browser surface sharing the player's session, matching Twitch's API/player isolation.
+- Background media is allowed to autoplay without a mouse gesture; hidden browsers remain muted. Player diagnostics log media error codes and source presence, never signed stream URLs.
+- Kick's blocking cookie-consent prompt is dismissed using the visible Reject All action, never Accept All. Short helper clips are not mistaken for the live player when a stream element exists.
+- Channel-bound Kick campaigns now require both a participating live channel and the campaign's category; a Rust campaign cannot keep watching a listed streamer in Just Sleeping. Category-less campaigns remain unrestricted, with category probes cached for two minutes.
+- Twitch and Kick health checks inspect the selected channel, video state and advancing media position. Repeated unreadable snapshots and frozen videos are failures, not healthy online streams.
+- Recovery stays on the selected campaign: resume/reload first, recreate the WebView controller after repeated failures. The existing login profile is retained; no tokens, exclusions or priorities are reset.
+- WebView process failures now recreate the control instead of attempting to initialize an already-dead controller. JavaScript calls dispatch to the UI thread.
+- Resume invalidates stale playback/progress samples and requests a fresh inventory. Health checks cannot overlap; failed checks no longer feed the engine watchdog as successful checks.
+- Kick reconciliation explicitly logs the selected campaign's server minutes or absence from the progress response and monitors absent campaigns for missing credit.
+- Added simulated pause/freeze/escalation tests for both platforms and an offline WebView test covering minimized-window independence, controller replacement, profile retention and background-thread calls.
+
+## [1.1.26] — 2026-10-12
+
+### Uninterrupted Twitch playback
+
+- Twitch API requests, header refreshes and campaign captures use a separate hidden browser sharing the player's environment and login profile. Opening the campaign dashboard no longer replaces the watched stream. Credential checks also use the API surface.
+- Health checks read the player's actual URL and video state. Wrong pages are repaired on the same channel; persistent pauses or buffering receive a one-minute grace and recovery is limited to once every two minutes. Local playback failures do not count as campaign/channel stalls.
+- Keep-current selection requires the selected live page and a playing video, not just an online streamer. Navigation logs distinguish the API and player surfaces without recording query strings.
+- Watch-signal failures now identify the failing stage and HTTP/socket error type without logging tokens or request bodies.
+
+### Inventory performance
+
+- The inventory uses a recycling, pixel-scrolling virtualized list. Off-screen campaign cards are not all rendered at once; filters and variable-height reward lists are preserved.
+- Server reconciliation retains existing campaign rows when rewards did not change, avoiding unnecessary reconstruction of their cards and images.
+- Added expired-session isolation, actual-player state, local-failure stall protection and compiled WPF inventory tests, including scrolling and filters. Game priorities, pins, exclusions and software-rendering settings are unchanged.
+
+## [1.1.25] — 2026-10-07
+
+### Twitch session and dashboard reads
+
+- A stored device token no longer replaces the existing browser session. Device authorization saves the token without changing the active client; a fallback switches clients only after token validation and a complete drops dashboard succeed.
+- Missing/null campaign lists, missing progress inventories and mismatched user sessions are read failures, even when HTTP returns 200 without GraphQL errors. A genuinely empty campaign array remains valid.
+- Failed dashboard reads now reach browser capture and bounded retries instead of silently reporting zero campaigns. Native capture also obtains the inventory when Twitch issues it separately.
+- The dashboard explains a failed read without asking the user to repeat authorization. Failed Twitch reads cannot trigger an all-completed notification or Sleep when done.
+- Browser header refresh restores its user agent and header mode. OAuth token case is preserved. Progress capture no longer logs raw inventory bodies.
+
 ## [1.1.24] — 2026-10-07
 
 ### Pinned campaigns and stalled streams

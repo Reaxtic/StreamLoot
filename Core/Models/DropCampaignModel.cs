@@ -88,7 +88,8 @@ namespace Core.Models
         bool IsPinned = false,
         bool IsStalled = false,
         int PinOrder = 0,
-        IReadOnlyList<string>? OnlineChannelNames = null)
+        IReadOnlyList<string>? OnlineChannelNames = null,
+        int GamePriorityOrder = 0)
     {
         /// <summary>
         /// True when at least one reward is fully watched but still unclaimed. This does not imply an account-link

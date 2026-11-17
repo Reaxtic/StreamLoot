@@ -46,6 +46,16 @@ public sealed class TwitchDeviceAuthorizationFlow : IDisposable
         }
     }
 
+    public void ClearRequirement()
+    {
+        lock (_sync)
+        {
+            if (_running is { IsCompleted: false }) return;
+            if (State.Stage == TwitchAuthorizationStage.Required)
+                Publish(new(TwitchAuthorizationStage.Idle));
+        }
+    }
+
     public Task<string?> StartAsync()
     {
         lock (_sync)

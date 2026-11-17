@@ -651,6 +651,27 @@ namespace Core.Managers
             }
         }
 
+        /// <summary>Uses the same option/event path as the Exclude checkbox in Settings.</summary>
+        public bool SetGameExcluded(DropsCampaign campaign, bool excluded)
+        {
+            string slug = campaign.Slug?.Trim().ToLowerInvariant() ?? "";
+            if (slug.Length == 0) return false; // Category-less campaigns have no game setting to change.
+            var options = campaign.Platform == Platform.Twitch ? TwitchGameFilterOptions : KickGameFilterOptions;
+            var priorities = campaign.Platform == Platform.Twitch ? _twitchGameWhitelistSlugs : _kickGameWhitelistSlugs;
+            var blocked = campaign.Platform == Platform.Twitch ? _twitchGameBlacklistSlugs : _kickGameBlacklistSlugs;
+            GameFilterOption? option = options.FirstOrDefault(o => string.Equals(o.Slug, slug, StringComparison.OrdinalIgnoreCase));
+            if (option == null)
+            {
+                int rank = priorities.FindIndex(s => string.Equals(s, slug, StringComparison.OrdinalIgnoreCase));
+                option = new GameFilterOption(campaign.Platform, slug, campaign.GameName, rank >= 0,
+                    blocked.Contains(slug, StringComparer.OrdinalIgnoreCase)) { PriorityOrder = rank >= 0 ? rank : int.MaxValue };
+                option.PropertyChanged += OnGameFilterOptionPropertyChanged;
+                options.Add(option);
+            }
+            option.IsExcluded = excluded;
+            return true;
+        }
+
         public void UpdateAvailableGameFilterOptions(IEnumerable<DropsCampaign> campaigns)
         {
             _isUpdatingGameFilterOptions = true;

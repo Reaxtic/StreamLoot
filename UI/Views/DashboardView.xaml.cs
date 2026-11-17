@@ -38,16 +38,19 @@ namespace UI.Views
         private readonly HashSet<Platform> _pendingLoadPlatforms = new();
         private bool _pendingLoadAll = false;
 
-        private HiddenWebViewHost _twitchWebView = new();
-        private HiddenWebViewHost _kickWebView = new();
+        private HiddenWebViewHost _twitchWebView = new("Twitch player");
+        private HiddenWebViewHost _twitchApiWebView = new("Twitch API");
+        private HiddenWebViewHost _kickWebView = new("Kick player");
+        private HiddenWebViewHost _kickApiWebView = new("Kick API");
         private TwitchGqlService? _twitchGqlService;
         private TwitchAuthorizationWindow? _authorizationWindow;
         private TwitchLoginWindow? _interactiveTwitchLoginWindow;
-        public Visibility TwitchAuthorizationVisibility => _twitchGqlService?.DeviceAuthorization.State.Stage
+        public Visibility TwitchAuthorizationVisibility => _twitchGqlService?.LastDashboardFetchFailed == true || _twitchGqlService?.DeviceAuthorization.State.Stage
             is TwitchAuthorizationStage.Required or TwitchAuthorizationStage.Requesting or TwitchAuthorizationStage.Waiting
                 or TwitchAuthorizationStage.Expired or TwitchAuthorizationStage.Cancelled or TwitchAuthorizationStage.Failed
             ? Visibility.Visible : Visibility.Collapsed;
-        public string TwitchAuthorizationMessage => Loc.Instance["Auth.Required"];
+        public string TwitchAuthorizationMessage => Loc.Instance[_twitchGqlService?.LastDashboardFetchFailed == true
+            ? "Auth.FetchFailed" : "Auth.Required"];
 
         private static bool _initialValidationCompleted = false;
         private static bool _isInitialized = false;
@@ -363,7 +366,7 @@ namespace UI.Views
 
             _dropsService = new DropsService();
 
-            _twitchGqlService = new TwitchGqlService(_twitchWebView);
+            _twitchGqlService = new TwitchGqlService(_twitchApiWebView);
             _twitchGqlService.DeviceAuthorization.StateChanged += state => Dispatcher.InvokeAsync(() =>
             {
                 OnPropertyChanged(nameof(TwitchAuthorizationVisibility));
@@ -544,11 +547,14 @@ namespace UI.Views
             if (loadedScope == Platform.Kick || _twitchService.Status != ConnectionStatus.Connected || _twitchGqlService == null)
                 return;
 
+            OnPropertyChanged(nameof(TwitchAuthorizationVisibility));
+            OnPropertyChanged(nameof(TwitchAuthorizationMessage));
+
             if (_twitchGqlService.LastDashboardFetchFailed)
             {
                 if (_twitchRetryCount >= _twitchRetryDelaysSec.Length)
                 {
-                    AppLogger.Warn("Dashboard", "Twitch still failing integrity after retries; leaving it for the next full refresh.");
+                    AppLogger.Warn("Dashboard", "Twitch dashboard still unavailable after retries; leaving it for the next full refresh.");
                     return;
                 }
                 int delaySec = _twitchRetryDelaysSec[_twitchRetryCount];
@@ -556,7 +562,7 @@ namespace UI.Views
                 _twitchRetryTimer.Stop();
                 _twitchRetryTimer.Interval = TimeSpan.FromSeconds(delaySec).TotalMilliseconds;
                 _twitchRetryTimer.Start();
-                AppLogger.Warn("Dashboard", $"Twitch campaign fetch failed integrity — retrying in {delaySec}s (attempt {_twitchRetryCount}/{_twitchRetryDelaysSec.Length}).");
+                AppLogger.Warn("Dashboard", $"Twitch campaign data could not be read — retrying in {delaySec}s (attempt {_twitchRetryCount}/{_twitchRetryDelaysSec.Length}).");
             }
             else
             {
@@ -689,7 +695,7 @@ namespace UI.Views
                 List<DropsCampaign> previousCampaigns = _activeCampaigns.ToList();
                 _activeCampaigns.Clear();
 
-                IReadOnlyList<DropsCampaign> fetched = await _dropsService.GetAllActiveCampaignsAsync(_kickWebView, _kickService.Status, _twitchWebView, _twitchService.Status, _twitchGqlService, cts.Token);
+                IReadOnlyList<DropsCampaign> fetched = await _dropsService.GetAllActiveCampaignsAsync(_kickApiWebView, _kickService.Status, _twitchApiWebView, _twitchService.Status, _twitchGqlService, cts.Token);
                 List<DropsCampaign> allCampaigns = fetched.ToList();
 
                 // Per-platform retention: connected, previously had campaigns, but this fetch returned none for the
@@ -700,7 +706,8 @@ namespace UI.Views
                     bool connected = platform == Platform.Twitch
                         ? _twitchService.Status == ConnectionStatus.Connected
                         : _kickService.Status == ConnectionStatus.Connected;
-                    if (!connected || allCampaigns.Any(c => c.Platform == platform))
+                    if (!connected || allCampaigns.Any(c => c.Platform == platform) ||
+                        (platform == Platform.Twitch && _twitchGqlService?.LastDashboardFetchFailed != true))
                         continue;
 
                     List<DropsCampaign> retained = previousCampaigns
@@ -755,7 +762,8 @@ namespace UI.Views
         /// <returns>A task that represents the asynchronous validation operation.</returns>
         private async Task ValidateTwitchCredentialsAsync()
         {
-            await _twitchService.ValidateCredentialsAsync(_twitchWebView);
+            await _twitchApiWebView.InitializeSharedSessionAsync(_twitchWebView);
+            await _twitchService.ValidateCredentialsAsync(_twitchApiWebView);
         }
         /// <summary>
         /// Validates the current Kick service credentials asynchronously.
@@ -763,7 +771,8 @@ namespace UI.Views
         /// <returns>A task that represents the asynchronous validation operation.</returns>
         private async Task ValidateKickCredentialsAsync()
         {
-            await _kickService.ValidateCredentialsAsync(_kickWebView);
+            await _kickApiWebView.InitializeSharedSessionAsync(_kickWebView);
+            await _kickService.ValidateCredentialsAsync(_kickApiWebView);
         }
         /// <summary>
         /// Asynchronously validates the credentials for external services if they are not already connected.

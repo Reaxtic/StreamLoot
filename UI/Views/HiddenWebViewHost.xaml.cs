@@ -9,10 +9,12 @@ using System.Windows;
 
 namespace UI.Views
 {
-    public partial class HiddenWebViewHost : Window, IWebViewHost, IDisposable
+    public partial class HiddenWebViewHost : Window, IWebViewHost, IPlaybackRecoveryHost, IDisposable
     {
         public WebView2 WebView => WebViewControl;
         private WebView2 WebViewControl => WebViewElement;
+        private CoreWebView2Environment? _sharedEnvironment;
+        public string Purpose { get; }
 
         /// <summary>
         /// Initializes a new instance of the HiddenWebViewHost class with a fully hidden and non-interactive window.
@@ -20,9 +22,19 @@ namespace UI.Views
         /// <remarks>This constructor configures the window to be completely invisible and non-activating,
         /// making it suitable for scenarios where a background WebView is required without any user interface or
         /// taskbar presence.</remarks>
-        public HiddenWebViewHost()
+        public HiddenWebViewHost(string purpose = "browser")
         {
+            Purpose = purpose;
             InitializeComponent();
+        }
+
+        /// <summary>Separate browsing surface, same environment/profile and login cookies as its owner.</summary>
+        public async Task InitializeSharedSessionAsync(HiddenWebViewHost sessionOwner)
+        {
+            if (!Dispatcher.CheckAccess()) { await await Dispatcher.InvokeAsync(() => InitializeSharedSessionAsync(sessionOwner)); return; }
+            await sessionOwner.EnsureInitializedAsync();
+            _sharedEnvironment = sessionOwner.WebView.CoreWebView2.Environment;
+            await EnsureInitializedAsync();
         }
 
         /// <summary>
@@ -34,14 +46,18 @@ namespace UI.Views
         /// <returns>A task that represents the asynchronous initialization operation.</returns>
         public async Task EnsureInitializedAsync()
         {
+            if (!Dispatcher.CheckAccess()) { await await Dispatcher.InvokeAsync(EnsureInitializedAsync); return; }
             // Must be called on UI Dispatcher thread. Ensure window is shown (invisible) so HwndHost can be created.
             if (!IsVisible)
                 Show();
 
-            Owner = System.Windows.Application.Current.MainWindow;
+            // An owned HWND is minimized together with its owner, which can stop media.
+            // The invisible player must have an independent lifetime and visibility.
+            Owner = null;
+            if (WindowState != WindowState.Normal) WindowState = WindowState.Normal;
 
             // Ensure CoreWebView2 environment is ready
-            await WebView.EnsureCoreWebView2Async();
+            await WebView.EnsureCoreWebView2Async(_sharedEnvironment);
 
             WebView.CoreWebView2.IsMuted = true;
             WebView.CoreWebView2.Settings.AreHostObjectsAllowed = true;
@@ -56,6 +72,34 @@ namespace UI.Views
 
         private bool _processFailedHooked;
         private int _recovering;
+        private string _lastNavigationUrl = "about:blank";
+
+        public async Task RecreatePlayerAsync(string channelUrl)
+        {
+            if (!Dispatcher.CheckAccess()) { await await Dispatcher.InvokeAsync(() => RecreatePlayerAsync(channelUrl)); return; }
+            if (Interlocked.CompareExchange(ref _recovering, 1, 0) != 0)
+                throw new InvalidOperationException("Player recovery is already running.");
+            try
+            {
+                WebView2 old = WebViewElement;
+                try
+                {
+                    old.CoreWebView2?.Stop();
+                    if (old.CoreWebView2 != null) old.CoreWebView2.ProcessFailed -= OnCoreProcessFailed;
+                }
+                catch (InvalidOperationException) { /* Browser process has already exited. */ }
+                var grid = (System.Windows.Controls.Grid)Content;
+                grid.Children.Remove(old);
+                old.Dispose();
+                WebViewElement = new WebView2 { DefaultBackgroundColor = System.Drawing.Color.Black };
+                grid.Children.Add(WebViewElement);
+                _processFailedHooked = false;
+                await EnsureInitializedAsync().WaitAsync(TimeSpan.FromSeconds(30));
+                await NavigateAsync(channelUrl);
+                AppLogger.Info("WebViewHost", $"{Purpose}: rebuilt player controller; login profile preserved.");
+            }
+            finally { Interlocked.Exchange(ref _recovering, 0); }
+        }
 
         /// <summary>
         /// Self-heals after a WebView2 process failure (e.g. a GPU-driver crash killing the browser process, which
@@ -66,41 +110,15 @@ namespace UI.Views
         {
             AppLogger.Error("WebViewHost", $"WebView2 process failed: kind={e.ProcessFailedKind}, reason={e.Reason}, exitCode={e.ExitCode} — attempting recovery.");
 
-            if (e.ProcessFailedKind is CoreWebView2ProcessFailedKind.RenderProcessExited
-                or CoreWebView2ProcessFailedKind.RenderProcessUnresponsive)
-            {
-                try { await Dispatcher.InvokeAsync(() => WebView.Reload()); }
-                catch (Exception ex) { AppLogger.Warn("WebViewHost", $"Renderer reload after process failure failed: {ex.Message}"); }
-                return;
-            }
-
-            if (Interlocked.CompareExchange(ref _recovering, 1, 0) != 0)
-                return;
+            if (Volatile.Read(ref _recovering) != 0) return;
             try
             {
-                await Task.Delay(3000); // let the crashed process settle before re-creating
-                await Dispatcher.InvokeAsync(async () =>
-                {
-                    try
-                    {
-                        _processFailedHooked = false;
-                        await WebView.EnsureCoreWebView2Async();
-                        WebView.CoreWebView2.IsMuted = true;
-                        WebView.CoreWebView2.Settings.AreHostObjectsAllowed = true;
-                        WebView.CoreWebView2.Settings.IsWebMessageEnabled = true;
-                        WebView.CoreWebView2.ProcessFailed += OnCoreProcessFailed;
-                        _processFailedHooked = true;
-                        AppLogger.Info("WebViewHost", "WebView2 recovered after process failure.");
-                    }
-                    catch (Exception ex)
-                    {
-                        AppLogger.Error("WebViewHost", "WebView2 recovery failed; will retry on next use.", ex);
-                    }
-                });
+                // EnsureCoreWebView2Async on an already initialized, dead controller is not recovery.
+                await RecreatePlayerAsync(_lastNavigationUrl);
             }
-            finally
+            catch (Exception ex)
             {
-                Interlocked.Exchange(ref _recovering, 0);
+                AppLogger.Warn("WebViewHost", $"{Purpose}: process recovery failed ({ex.GetType().Name}); health monitor will retry.");
             }
         }
         /// <summary>
@@ -135,6 +153,7 @@ namespace UI.Views
         /// Returns an empty list if the WebView2 control is not initialized or if no cookies are found.</returns>
         public async Task<IReadOnlyList<CoreWebView2Cookie>> GetCookiesAsync(string url)
         {
+            if (!Dispatcher.CheckAccess()) return await await Dispatcher.InvokeAsync(() => GetCookiesAsync(url));
             if (WebView?.CoreWebView2 == null)
                 return [];
 
@@ -505,7 +524,7 @@ namespace UI.Views
                             JsonElement bodyJson = JsonDocument.Parse(bodyResult).RootElement;
                             string body = bodyJson.GetProperty("body").GetString() ?? "";
 
-                            AppLogger.Debug("WebViewCapture", $"Body captured for dropCampaignsInProgress response: {body}\n\nlength={body.Length}");
+                            AppLogger.Debug("WebViewCapture", $"Drops inventory response captured; length={body.Length}.");
 
                             if (body.Contains("dropCampaignsInProgress") || body.Contains("dropCampaignsInProgress"))
                             {
@@ -1223,14 +1242,15 @@ namespace UI.Views
                 return "{}";
             }
 
-            TaskCompletionSource<string> tcs = new TaskCompletionSource<string>();
+            TaskCompletionSource<string> tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            string responsePrefix = "KICKSTATUS:" + Guid.NewGuid().ToString("N") + ":";
 
             void MessageReceivedHandler(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
             {
                 string message = e.TryGetWebMessageAsString() ?? "";
-                if (message.StartsWith("KICKSTATUS:", StringComparison.Ordinal))
+                if (message.StartsWith(responsePrefix, StringComparison.Ordinal))
                 {
-                    tcs.TrySetResult(message.Substring("KICKSTATUS:".Length));
+                    tcs.TrySetResult(message.Substring(responsePrefix.Length));
                     WebView.CoreWebView2.WebMessageReceived -= MessageReceivedHandler;
                 }
             }
@@ -1240,6 +1260,7 @@ namespace UI.Views
             try
             {
                 string slugsJson = System.Text.Json.JsonSerializer.Serialize(slugs);
+                string responsePrefixJson = System.Text.Json.JsonSerializer.Serialize(responsePrefix);
                 string script = $@"
                     (async () => {{
                         const slugs = {slugsJson};
@@ -1254,13 +1275,13 @@ namespace UI.Views
                                     const j = await r.json();
                                     out[s] = (j && j.livestream) ? (j.livestream.viewer_count ?? 0) : -1;
                                 }} else {{
-                                    out[s] = -1;
+                                    out[s] = -2; // transport/HTTP failure is not an offline verdict
                                 }}
                             }} catch (err) {{
-                                out[s] = -1;
+                                out[s] = -2;
                             }}
                         }}));
-                        window.chrome.webview.postMessage('KICKSTATUS:' + JSON.stringify(out));
+                        window.chrome.webview.postMessage({responsePrefixJson} + JSON.stringify(out));
                     }})();
                 ";
 
@@ -1302,6 +1323,11 @@ namespace UI.Views
         /// <returns>A task that represents the asynchronous navigation operation.</returns>
         public async Task NavigateAsync(string url)
         {
+            if (!Dispatcher.CheckAccess()) { await await Dispatcher.InvokeAsync(() => NavigateAsync(url)); return; }
+            _lastNavigationUrl = url;
+            // No query strings: activation URLs and account redirects may carry private data.
+            if (Uri.TryCreate(url, UriKind.Absolute, out Uri? route))
+                AppLogger.Info("WebViewNavigation", $"{Purpose} -> {route.Host}{route.AbsolutePath}");
             // Force fresh navigation every time
             string forcedUrl = $"{url}{(url.Contains('?') ? "&" : "?")}forceReload={DateTimeOffset.Now.ToUnixTimeMilliseconds()}";
 
@@ -1331,6 +1357,8 @@ namespace UI.Views
         /// representing the return value of the executed script.</returns>
         public async Task<string> ExecuteScriptAsync(string script)
         {
+            if (!Dispatcher.CheckAccess()) return await await Dispatcher.InvokeAsync(() => ExecuteScriptAsync(script));
+            await EnsureInitializedAsync();
             // ExecuteScriptAsync returns a JSON string literal: e.g. "\"{...}\""
             return await WebView.CoreWebView2.ExecuteScriptAsync(script).WaitAsync(TimeSpan.FromSeconds(30));
         }

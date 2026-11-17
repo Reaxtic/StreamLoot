@@ -7,6 +7,8 @@
     <UseWPF>true</UseWPF>
   </PropertyGroup>
   <ItemGroup>
+    <Content Include="TestAssets/player.html" CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="../../Core/Core.csproj" />
+    <ProjectReference Include="../../UI/UI.csproj" />
   </ItemGroup>
 </Project>

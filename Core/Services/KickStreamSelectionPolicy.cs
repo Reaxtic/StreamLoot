@@ -2,6 +2,9 @@ namespace Core.Services;
 
 public static class KickStreamSelectionPolicy
 {
+    public static bool CategoryMatches(string? expected, string? actual)
+        => string.IsNullOrWhiteSpace(expected) || (!string.IsNullOrWhiteSpace(actual)
+            && string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase));
     private static string? Channel(string? url)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)

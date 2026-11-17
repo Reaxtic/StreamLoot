@@ -7,8 +7,23 @@ using System.Runtime.CompilerServices;
 using System.Net;
 using System.Net.Http;
 using System.Collections.ObjectModel;
+using System.IO;
 
 // Tests use fake HTTP and do not instantiate application singletons or change the user's startup entry.
+// Logging reads settings. Substitute its lazy factory before the first log so tests never register/unregister autostart.
+var testProfile = Path.Combine(AppContext.BaseDirectory, "test-profile");
+Directory.CreateDirectory(testProfile);
+Environment.SetEnvironmentVariable("APPDATA", testProfile);
+var fakeSettings = (UISettingsManager)RuntimeHelpers.GetUninitializedObject(typeof(UISettingsManager));
+foreach (string field in new[] { "_twitchGameWhitelistSlugs", "_kickGameWhitelistSlugs", "_twitchGameBlacklistSlugs", "_kickGameBlacklistSlugs" })
+    typeof(UISettingsManager).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(fakeSettings, new List<string>());
+foreach (string field in new[] { "<TwitchGameFilterOptions>k__BackingField", "<KickGameFilterOptions>k__BackingField" })
+    typeof(UISettingsManager).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(fakeSettings, new ObservableCollection<GameFilterOption>());
+var settingsLazy = (Lazy<UISettingsManager>)typeof(UISettingsManager)
+    .GetField("_instance", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+typeof(Lazy<UISettingsManager>).GetField("_factory", BindingFlags.NonPublic | BindingFlags.Instance)!
+    .SetValue(settingsLazy, new Func<UISettingsManager>(() => fakeSettings));
+_ = settingsLazy.Value;
 void Check(bool ok, string name) { if (!ok) throw new Exception(name); Console.WriteLine("PASS " + name); }
 void Set(object target, string field, object value) => target.GetType()
     .GetField(field, BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(target, value);
@@ -53,8 +68,13 @@ Call("RecordTwitchConnectionSuccess", campaign.Id);
 Call("TrackCampaignCrediting", campaign.Id, Platform.Twitch, 93);
 Check(!samples.ContainsKey(campaign.Id), "recovery grace prevents immediate false rejection in real manager");
 Check(!policy.IsChannelStalled(campaign.Id, "test-channel", DateTime.Now), "transport failure does not penalize campaign channel");
-Console.WriteLine("All integration tests passed.");
 await TwitchAuthorizationRegression.Run();
+await TwitchDashboardRegression.Run();
+TwitchPlaybackRegression.Run();
+PlaybackRecoveryRegression.Run();
+await GamePriorityRegression.Run();
+InventoryVirtualizationRegression.Run();
+Console.WriteLine("All integration tests passed.");
 
 sealed class FakeDirectoryHandler(bool fail) : HttpMessageHandler
 {

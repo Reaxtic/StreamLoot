@@ -1,5 +1,6 @@
 ﻿using Core.Managers;
 using Core.Models;
+using Core.Enums;
 using System.ComponentModel;
 using System.Linq;
 using System.Windows;
@@ -18,6 +19,9 @@ namespace UI.Views
         private readonly ICollectionView _campaignsView;
         private bool _onlyAvailable;
         private bool _hideClaimed;
+        private bool _hideTwitch;
+        private bool _hideKick;
+        private Action<string> _copyGameNameToClipboard = System.Windows.Clipboard.SetText;
 
         private InventoryView()
         {
@@ -26,11 +30,14 @@ namespace UI.Views
 
             // Filter the shared campaigns view so the "Show only available" toggle can hide campaigns whose
             // listed channels are all offline. Unknown/Category/Available remain visible.
-            _campaignsView = CollectionViewSource.GetDefaultView(DropsInventoryManager.Instance.ActiveCampaigns);
+            // This view belongs only to the inventory; display filters never change the miner's source collection.
+            _campaignsView = new ListCollectionView(DropsInventoryManager.Instance.ActiveCampaigns);
             _campaignsView.Filter = item =>
             {
                 if (item is not DropsCampaign c)
                     return true;
+                if ((_hideTwitch && c.Platform == Platform.Twitch) || (_hideKick && c.Platform == Platform.Kick))
+                    return false;
                 if (_onlyAvailable && c.Availability == CampaignAvailability.Unavailable)
                     return false;
                 // "Hide claimed": drop campaigns whose rewards are all already claimed (nothing left to earn).
@@ -38,9 +45,26 @@ namespace UI.Views
                     return false;
                 return true;
             };
+            CampaignsList.ItemsSource = _campaignsView;
 
             // Re-check availability whenever the Inventory is opened (throttled inside the manager).
             Loaded += async (_, _) => await DropsInventoryManager.Instance.RefreshAvailabilityAsync();
+        }
+
+        private void OnHideTwitchClick(object sender, RoutedEventArgs e)
+        {
+            _hideTwitch = !_hideTwitch;
+            HideTwitchButton.SetBinding(System.Windows.Controls.ContentControl.ContentProperty,
+                new System.Windows.Data.Binding($"[{(_hideTwitch ? "Inv.ShowTwitch" : "Inv.HideTwitch")}]") { Source = Loc.Instance, Mode = BindingMode.OneWay });
+            _campaignsView.Refresh();
+        }
+
+        private void OnHideKickClick(object sender, RoutedEventArgs e)
+        {
+            _hideKick = !_hideKick;
+            HideKickButton.SetBinding(System.Windows.Controls.ContentControl.ContentProperty,
+                new System.Windows.Data.Binding($"[{(_hideKick ? "Inv.ShowKick" : "Inv.HideKick")}]") { Source = Loc.Instance, Mode = BindingMode.OneWay });
+            _campaignsView.Refresh();
         }
 
         private void OnOnlyAvailableChanged(object sender, RoutedEventArgs e)
@@ -68,6 +92,39 @@ namespace UI.Views
                 // Toggle within the pin QUEUE: unpinned → appended (mined after earlier pins), pinned → removed.
                 await DropsInventoryManager.Instance.SetForcedCampaignAsync(campaign.Id);
                 _campaignsView.Refresh();
+            }
+        }
+
+        private async void OnCopyGameNameClick(object sender, RoutedEventArgs e)
+        {
+            if (sender is not FrameworkElement { DataContext: DropsCampaign campaign }
+                || string.IsNullOrWhiteSpace(campaign.GameName)) return;
+
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                try
+                {
+                    _copyGameNameToClipboard(campaign.GameName);
+                    ExclusionNotice.Text = string.Format(Loc.Instance["Inv.NameCopied"], campaign.GameName);
+                    ExclusionNotice.Visibility = Visibility.Visible;
+                    return;
+                }
+                catch (System.Runtime.InteropServices.ExternalException)
+                {
+                    if (attempt < 2) await Task.Delay(100);
+                }
+            }
+            ExclusionNotice.Text = Loc.Instance["Inv.CopyFailed"];
+            ExclusionNotice.Visibility = Visibility.Visible;
+        }
+
+        private void OnExcludeGameClick(object sender, RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement { DataContext: DropsCampaign campaign }
+                && UISettingsManager.Instance.SetGameExcluded(campaign, true))
+            {
+                ExclusionNotice.Text = string.Format(Loc.Instance["Inv.GameExcludedNotice"], campaign.GameName, campaign.Platform);
+                ExclusionNotice.Visibility = Visibility.Visible;
             }
         }
 

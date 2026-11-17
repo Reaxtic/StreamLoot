@@ -25,6 +25,10 @@ namespace Core.Services
         private string? _accessToken;
         private string? _userId;
         private bool _omitIntegrityHeader;
+        private bool _deviceDashboardRejected;
+        private readonly Func<string?> _loadDeviceToken = TryLoadTwitchDeviceToken;
+        private const string BrowserUserAgent =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36";
 
         private const string AndroidClientId = "ue6666qo983tsx6so1t0vnawi233wa";
         private const string AndroidUserAgent =
@@ -83,7 +87,7 @@ namespace Core.Services
             };
 
             _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36"
+                BrowserUserAgent
             );
 
             LoadHashCacheFromDisk();
@@ -109,13 +113,6 @@ namespace Core.Services
         /// <exception cref="InvalidOperationException">Thrown if the Client-Integrity token cannot be captured from the HTTP headers.</exception>
         private async Task RefreshHeadersAsync(CancellationToken ct = default, bool force = false)
         {
-            string? savedDeviceToken = TryLoadTwitchDeviceToken();
-            if (!string.IsNullOrWhiteSpace(savedDeviceToken))
-            {
-                await ConfigureAndroidCompatibilityAsync(savedDeviceToken);
-                return;
-            }
-
             // Fast path: a previously captured token is still valid, so skip the
             // expensive WebView navigation entirely.
             if (!force && HeadersAreFresh)
@@ -130,7 +127,7 @@ namespace Core.Services
                 if (!force && HeadersAreFresh)
                     return;
 
-                const int maxAttempts = 10;
+                const int maxAttempts = 3;
                 const int baseDelayMs = 5 * 1000; // Start with 5s delay on retry
 
                 for (int attempt = 1; attempt <= maxAttempts; attempt++)
@@ -171,12 +168,15 @@ namespace Core.Services
                         _integrityToken = integrityToken;
                         _deviceId = deviceId ?? _deviceId; // Device-ID is optional – keep old if missing
                         _accessToken = accessToken;
+                        _omitIntegrityHeader = false;
+                        _httpClient.DefaultRequestHeaders.UserAgent.Clear();
+                        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(BrowserUserAgent);
                         _headersValidUntilUtc = ComputeHeadersValidUntil(integrityToken);
 
                         AppLogger.Debug("TwitchGql", $"[RefreshHeaders] Success on attempt {attempt} – Got fresh headers (valid until {_headersValidUntilUtc:u})");
                         return;
                     }
-                    catch (Exception ex) when (attempt < maxAttempts)
+                    catch (Exception ex) when (ex is not OperationCanceledException && attempt < maxAttempts)
                     {
                         AppLogger.Warn("TwitchGql", $"[RefreshHeaders] Attempt {attempt} failed: {ex.Message}. Retrying in {baseDelayMs * attempt}ms...");
 
@@ -256,7 +256,7 @@ namespace Core.Services
         /// Retrieves the Twitch authentication token from the browser cookie asynchronously.
         /// </summary>
         /// <returns>A string containing the OAuth authentication token in the format "OAuth {token}". The token is returned in
-        /// lowercase.</returns>
+        /// its original case.</returns>
         /// <exception cref="InvalidOperationException">Thrown if the "auth-token" cookie is not found for the Twitch domain.</exception>
         private async Task<string> GetAuthTokenFromCookieAsync()
         {
@@ -273,8 +273,8 @@ namespace Core.Services
                 throw new InvalidOperationException("Twitch access token was empty");
 
             return token.StartsWith("OAuth ", StringComparison.OrdinalIgnoreCase)
-                ? "OAuth " + token[6..].ToLowerInvariant()
-                : "OAuth " + token.ToLowerInvariant();
+                ? "OAuth " + token[6..]
+                : "OAuth " + token;
         }
 
         private async Task ConfigureAndroidCompatibilityAsync(string accessToken)
@@ -338,8 +338,10 @@ namespace Core.Services
             try
             {
                 SaveTwitchDeviceToken(token);
-                await ConfigureAndroidCompatibilityAsync(token);
-                AppLogger.Info("TwitchGql", "User-requested device authorization completed; token stored securely.");
+                _deviceDashboardRejected = false;
+                // Approval alone does not prove that this client can read drops. Keep the browser session;
+                // the saved token may be selected only after a complete dashboard succeeds in the fallback.
+                AppLogger.Info("TwitchGql", "User-requested device authorization completed; token stored securely without replacing the browser session.");
                 return true;
             }
             finally { _deviceAuthorizationSaveLock.Release(); }
@@ -696,11 +698,13 @@ namespace Core.Services
             if (string.IsNullOrWhiteSpace(login) || string.IsNullOrWhiteSpace(_userId))
                 return false;
 
+            string stage = "session headers";
             try
             {
                 if (_clientId == null || _integrityToken == null)
                     await RefreshHeadersAsync(ct);
 
+                stage = "stream metadata";
                 (string ChannelId, string BroadcastId)? ids = await GetStreamIdsAsync(login, ct);
                 if (ids == null)
                 {
@@ -708,6 +712,7 @@ namespace Core.Services
                     return false;
                 }
 
+                stage = "tracking endpoint";
                 string? spade = await GetSpadeUrlAsync(login, ct);
                 if (string.IsNullOrWhiteSpace(spade))
                     return false;
@@ -723,14 +728,17 @@ namespace Core.Services
 
                 using FormUrlEncodedContent content = new(new[] { new KeyValuePair<string, string>("data", b64) });
                 using HttpRequestMessage req = new(HttpMethod.Post, spade) { Content = content };
-                HttpResponseMessage resp = await _httpClient.SendAsync(req, ct);
+                stage = "watch signal";
+                using HttpResponseMessage resp = await _httpClient.SendAsync(req, ct);
 
                 AppLogger.Info("TwitchWatch", $"minute-watched '{login}' (ch={ids.Value.ChannelId}, b={ids.Value.BroadcastId}) -> HTTP {(int)resp.StatusCode}.");
                 return resp.IsSuccessStatusCode;
             }
             catch (Exception ex)
             {
-                AppLogger.Warn("TwitchWatch", $"Watch heartbeat failed for '{login}': {ex.Message}");
+                string errorKind = ex is HttpRequestException http ? http.HttpRequestError.ToString() : ex.GetType().Name;
+                string innerKind = ex.InnerException is System.Net.Sockets.SocketException socket ? socket.SocketErrorCode.ToString() : ex.InnerException?.GetType().Name ?? "none";
+                AppLogger.Warn("TwitchWatch", $"Watch heartbeat failed for '{login}': stage={stage}, kind={errorKind}, inner={innerKind}. No tokens or request bodies logged.");
                 return false;
             }
         }
@@ -904,114 +912,126 @@ namespace Core.Services
         /// user's drops campaigns and inventory.</returns>
         public async Task<JsonArray> QueryFullDropsDashboardAsync(CancellationToken ct = default, bool allowWebViewFallback = false)
         {
-            await RefreshHeadersAsync(ct);
-
-            // Fetch hashes
-            string dashboardHash = await GetPersistedQueryHashAsync("ViewerDropsDashboard", ct);
-            string inventoryHash = await GetPersistedQueryHashAsync("Inventory", ct, "https://www.twitch.tv/drops/inventory");
-
-            JsonArray payload = BuildDashboardPayload(inventoryHash, dashboardHash);
-
-            using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, "https://gql.twitch.tv/gql")
+            LastDashboardFetchFailed = true;
+            JsonArray? payload = null;
+            try
             {
-                Content = JsonContent.Create(payload)
-            };
-
-            request.Headers.TryAddWithoutValidation("Client-ID", _clientId);
-            if (!_omitIntegrityHeader)
-                request.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
-            request.Headers.TryAddWithoutValidation("Authorization", _accessToken);
-
-            if (!string.IsNullOrEmpty(_deviceId))
-                request.Headers.TryAddWithoutValidation("X-Device-Id", _deviceId);
-
-            HttpResponseMessage response = await _httpClient.SendAsync(request, ct);
-            string jsonText = await response.Content.ReadAsStringAsync(ct);
-
-            if (!response.IsSuccessStatusCode || jsonText.Contains("\"errors\""))
-            {
-                // Twitch currently rejects some page-issued integrity tokens while accepting the same authenticated
-                // request without that optional header. Probe once and remember the working mode for this session.
-                using HttpRequestMessage noIntegrityRequest = new(HttpMethod.Post, "https://gql.twitch.tv/gql")
+                await RefreshHeadersAsync(ct);
+                string dashboardHash = await GetPersistedQueryHashAsync("ViewerDropsDashboard", ct);
+                string inventoryHash = await GetPersistedQueryHashAsync("Inventory", ct, "https://www.twitch.tv/drops/inventory");
+                payload = BuildDashboardPayload(inventoryHash, dashboardHash);
+                try
                 {
-                    Content = JsonContent.Create(payload)
-                };
-                noIntegrityRequest.Headers.TryAddWithoutValidation("Client-ID", _clientId);
-                noIntegrityRequest.Headers.TryAddWithoutValidation("Authorization", _accessToken);
-                if (!string.IsNullOrEmpty(_deviceId))
-                    noIntegrityRequest.Headers.TryAddWithoutValidation("X-Device-Id", _deviceId);
-
-                using HttpResponseMessage noIntegrityResponse = await _httpClient.SendAsync(noIntegrityRequest, ct);
-                string noIntegrityJson = await noIntegrityResponse.Content.ReadAsStringAsync(ct);
-                if (noIntegrityResponse.IsSuccessStatusCode && !noIntegrityJson.Contains("\"errors\""))
+                    return DashboardSucceeded(await SendDashboardAsync(payload, !_omitIntegrityHeader, ct), "session");
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    _omitIntegrityHeader = true;
-                    LastDashboardFetchFailed = false;
-                    AppLogger.Info("TwitchGql", "Dashboard request succeeded without Client-Integrity; using compatibility mode.");
-                    return JsonNode.Parse(noIntegrityJson)!.AsArray();
+                    AppLogger.Warn("TwitchGql", $"Dashboard session read failed: {ex.Message}");
                 }
 
-                AppLogger.Warn("TwitchGql", $"Dashboard compatibility probe failed. status={(int)noIntegrityResponse.StatusCode}, hasErrors={noIntegrityJson.Contains("\"errors\"")}.");
+                // Keep the same browser account when testing the optional integrity header.
+                try
+                {
+                    JsonArray dashboard = await SendDashboardAsync(payload, false, ct);
+                    _omitIntegrityHeader = true;
+                    return DashboardSucceeded(dashboard, "browser session without optional integrity header");
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    AppLogger.Warn("TwitchGql", $"Dashboard compatibility read failed: {ex.Message}");
+                }
 
-                AppLogger.Warn("TwitchGql", $"QueryFullDropsDashboard initial call failed. status={(int)response.StatusCode}, hasErrors={jsonText.Contains("\"errors\"")}. Refreshing headers and retrying.");
                 await RefreshHeadersAsync(ct, force: true);
-
                 dashboardHash = await GetPersistedQueryHashAsync("ViewerDropsDashboard", ct, allowCached: false);
                 inventoryHash = await GetPersistedQueryHashAsync("Inventory", ct, "https://www.twitch.tv/drops/inventory", allowCached: false);
                 payload = BuildDashboardPayload(inventoryHash, dashboardHash);
+                return DashboardSucceeded(await SendDashboardAsync(payload, true, ct), "refreshed browser session");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                AppLogger.Warn("TwitchGql", $"Browser dashboard read failed; trying available fallbacks. {ex.Message}");
+            }
 
-                using HttpRequestMessage newRequest = new HttpRequestMessage(HttpMethod.Post, "https://gql.twitch.tv/gql")
+            if (allowWebViewFallback)
+            {
+                try
                 {
-                    Content = JsonContent.Create(payload)
-                };
-
-                newRequest.Headers.TryAddWithoutValidation("Client-ID", _clientId);
-                if (!_omitIntegrityHeader)
-                    newRequest.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
-                newRequest.Headers.TryAddWithoutValidation("Authorization", _accessToken);
-
-                if (!string.IsNullOrEmpty(_deviceId))
-                    newRequest.Headers.TryAddWithoutValidation("X-Device-Id", _deviceId);
-
-                response = await _httpClient.SendAsync(newRequest, ct);
-                jsonText = await response.Content.ReadAsStringAsync(ct);
-
-                if (jsonText.Contains("\"errors\""))
+                    return DashboardSucceeded(await QueryFullDropsDashboardViaWebViewAsync(ct), "native browser capture");
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    AppLogger.Error("TwitchGql", "QueryFullDropsDashboard retry still returned GraphQL errors.");
-
-                    // Token-replay keeps failing Twitch's integrity check. Fall back to reading the dashboard the way
-                    // the real browser does: navigate the WebView to /drops/campaigns and capture its own response —
-                    // the browser solves the Kasada challenge natively, so this works where the replay can't.
-                    if (allowWebViewFallback)
-                    {
-                        try
-                        {
-                            JsonArray native = await QueryFullDropsDashboardViaWebViewAsync(ct);
-                            LastDashboardFetchFailed = false;
-                            AppLogger.Info("TwitchGql", "QueryFullDropsDashboard recovered via native WebView capture.");
-                            return native;
-                        }
-                        catch (Exception ex)
-                        {
-                            AppLogger.Warn("TwitchGql", $"Native WebView dashboard fallback failed: {ex.Message}");
-                        }
-                    }
-
-                    _deviceAuthorization.RequireAuthorization();
-                    AppLogger.Warn("TwitchGql", "Authorization may be required; waiting for the user's explicit action.");
-
-                    LastDashboardFetchFailed = true;
-                    throw new InvalidOperationException("Failed integrity, please wait a while and try again.");
+                    AppLogger.Warn("TwitchGql", $"Native WebView dashboard fallback failed: {ex.Message}");
                 }
             }
 
-            response.EnsureSuccessStatusCode();
+            // A user-approved token is a fallback, not a global override. Do not switch clients until
+            // both its token validation and its actual drops response succeed.
+            if (!_deviceDashboardRejected)
+            {
+                string? deviceToken = _loadDeviceToken();
+                if (!string.IsNullOrWhiteSpace(deviceToken))
+                {
+                    try
+                    {
+                        if (payload == null && TryGetCachedHash("Inventory", false, out string? inventoryHash) &&
+                            TryGetCachedHash("ViewerDropsDashboard", false, out string? dashboardHash))
+                            payload = BuildDashboardPayload(inventoryHash!, dashboardHash!);
+                        if (payload == null)
+                            throw new InvalidOperationException("No dashboard request is available for device-session validation.");
+                        await ValidateDeviceTokenAsync(deviceToken, ct);
+                        JsonArray dashboard = await SendDashboardAsync(payload, false, ct, deviceToken);
+                        await ConfigureAndroidCompatibilityAsync(deviceToken);
+                        return DashboardSucceeded(dashboard, "validated device session");
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _deviceDashboardRejected = true;
+                        AppLogger.Warn("TwitchGql", $"Device session cannot read drops; browser session retained. {ex.Message}");
+                    }
+                }
+            }
 
-            JsonArray responseArray = JsonNode.Parse(jsonText)!.AsArray();
+            // A data/transport failure is not proof that the user needs another authorization code.
+            if (string.IsNullOrWhiteSpace(await _host.GetCookieValueAsync("https://twitch.tv", "auth-token")))
+                _deviceAuthorization.RequireAuthorization();
+            throw new InvalidOperationException("Twitch did not provide a complete drops dashboard. Campaign loading will be retried; do not reauthorize solely because of this error.");
+        }
+
+        private JsonArray DashboardSucceeded(JsonArray dashboard, string source)
+        {
+            TwitchDashboardResponse.Validate(dashboard);
             LastDashboardFetchFailed = false;
-            AppLogger.Info("TwitchGql", "QueryFullDropsDashboard completed successfully.");
-            return responseArray;
+            _deviceAuthorization.ClearRequirement();
+            AppLogger.Info("TwitchGql", $"QueryFullDropsDashboard completed successfully via {source}. campaigns={dashboard[1]!["data"]!["currentUser"]!["dropCampaigns"]!.AsArray().Count}");
+            return dashboard;
+        }
+
+        private async Task<JsonArray> SendDashboardAsync(JsonArray payload, bool includeIntegrity, CancellationToken ct, string? deviceToken = null)
+        {
+            using HttpRequestMessage request = new(HttpMethod.Post, "https://gql.twitch.tv/gql") { Content = JsonContent.Create(payload) };
+            request.Headers.TryAddWithoutValidation("Client-ID", deviceToken == null ? _clientId : AndroidClientId);
+            request.Headers.TryAddWithoutValidation("Authorization", deviceToken == null ? _accessToken : NormalizeAuthToken(deviceToken));
+            if (deviceToken == null && includeIntegrity)
+                request.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
+            if (deviceToken != null)
+                request.Headers.TryAddWithoutValidation("User-Agent", AndroidUserAgent);
+            if (!string.IsNullOrEmpty(_deviceId))
+                request.Headers.TryAddWithoutValidation("X-Device-Id", _deviceId);
+            using HttpResponseMessage response = await _httpClient.SendAsync(request, ct);
+            response.EnsureSuccessStatusCode();
+            return TwitchDashboardResponse.Parse(await response.Content.ReadAsStringAsync(ct));
+        }
+
+        private async Task ValidateDeviceTokenAsync(string token, CancellationToken ct)
+        {
+            using HttpRequestMessage request = new(HttpMethod.Get, "https://id.twitch.tv/oauth2/validate");
+            request.Headers.TryAddWithoutValidation("Authorization", NormalizeAuthToken(token));
+            using HttpResponseMessage response = await _httpClient.SendAsync(request, ct);
+            response.EnsureSuccessStatusCode();
+            JsonNode? validation = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
+            if (validation?["client_id"]?.GetValue<string>() != AndroidClientId ||
+                string.IsNullOrWhiteSpace(validation?["user_id"]?.GetValue<string>()))
+                throw new InvalidOperationException("Device authorization did not validate for this user client.");
         }
 
         /// <summary>
@@ -1046,10 +1066,18 @@ namespace Core.Services
             if (dropsDashboard == null)
                 throw new InvalidOperationException("Native dashboard capture did not contain a dropCampaigns array.");
 
+            if (inventory == null)
+            {
+                // The campaigns page may issue Inventory separately. Never replace missing progress with zero.
+                JsonNode? progress = JsonNode.Parse(await _host.CaptureViewerDropsProgressResponseAsync(15000, ct));
+                IEnumerable<JsonNode?> progressElements = progress is JsonArray progressArray ? progressArray : new[] { progress };
+                inventory = progressElements.OfType<JsonObject>().FirstOrDefault(obj =>
+                    !TwitchDashboardResponse.HasErrors(obj) &&
+                    obj["data"]?["currentUser"]?["inventory"]?["dropCampaignsInProgress"] is JsonArray);
+            }
+
             // Mirror the batch shape the providers index into: [0] = inventory, [1] = ViewerDropsDashboard.
-            return new JsonArray(
-                (JsonNode?)(inventory?.DeepClone()) ?? new JsonObject(),
-                dropsDashboard.DeepClone());
+            return TwitchDashboardResponse.Validate(new JsonArray(inventory?.DeepClone(), dropsDashboard.DeepClone()));
         }
         /// <summary>
         /// Retrieves detailed information for multiple Twitch drop campaigns in a single batch operation.
