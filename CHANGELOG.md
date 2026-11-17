@@ -3,6 +3,14 @@
 All notable changes to **Stream Loot** are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.1.33] — 2026-11-17
+
+### Copy by clicking the game title
+
+- Removed the separate Copy button from inventory cards. Click the game name itself to copy its full text.
+- The title remains visually integrated with the card. A hand cursor, hover underline and localized tooltip explain the action. Keyboard focus and Enter/Space activation remain available.
+- Retained clipboard retries and confirmation without changing mining, priorities, pins or exclusions. Updated WPF tests to cover the title action and absence of the old button.
+
 ## [1.1.32] — 2026-11-17
 
 ### Copy game names from inventory

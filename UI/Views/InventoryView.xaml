@@ -123,18 +123,33 @@
 
                                 <!-- Campaign Info -->
                                 <StackPanel Grid.Column="1" Margin="20,0,0,0" VerticalAlignment="Center">
-                                    <DockPanel LastChildFill="True">
-                                        <Button x:Name="CopyGameNameButton" DockPanel.Dock="Right"
-                                                Content="{loc:T Inv.CopyName}" ToolTip="{loc:T Inv.CopyNameTip}"
-                                                Click="OnCopyGameNameClick" Margin="10,0,0,0" Padding="8,3"
-                                                VerticalAlignment="Center" Style="{StaticResource AccentButtonStyle}"/>
-                                        <TextBox x:Name="GameNameText" Text="{Binding GameName, Mode=OneWay}"
-                                                 Style="{x:Null}" IsReadOnly="True" IsTabStop="False"
-                                                 BorderThickness="0" Padding="0" Background="Transparent"
-                                                 TextWrapping="Wrap" FontSize="22" FontWeight="Bold"
-                                                 Foreground="{DynamicResource TextPrimaryBrush}"
-                                                 ToolTip="{loc:T Inv.CopyNameTip}"/>
-                                    </DockPanel>
+                                    <Button x:Name="GameNameCopyTarget" Content="{Binding GameName}"
+                                            Click="OnCopyGameNameClick" ToolTip="{loc:T Inv.CopyNameTip}"
+                                            HorizontalAlignment="Left" Cursor="Hand">
+                                        <Button.Style>
+                                            <Style TargetType="Button">
+                                                <Setter Property="FontSize" Value="22"/>
+                                                <Setter Property="FontWeight" Value="Bold"/>
+                                                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                                                <Setter Property="Template">
+                                                    <Setter.Value>
+                                                        <ControlTemplate TargetType="Button">
+                                                            <TextBlock x:Name="GameNameLabel" Text="{TemplateBinding Content}"
+                                                                       TextWrapping="Wrap" Foreground="{TemplateBinding Foreground}"/>
+                                                            <ControlTemplate.Triggers>
+                                                                <Trigger Property="IsMouseOver" Value="True">
+                                                                    <Setter TargetName="GameNameLabel" Property="TextDecorations" Value="Underline"/>
+                                                                </Trigger>
+                                                                <Trigger Property="IsKeyboardFocused" Value="True">
+                                                                    <Setter TargetName="GameNameLabel" Property="TextDecorations" Value="Underline"/>
+                                                                </Trigger>
+                                                            </ControlTemplate.Triggers>
+                                                        </ControlTemplate>
+                                                    </Setter.Value>
+                                                </Setter>
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
 
                                     <TextBlock Text="{Binding Name}"
                                                FontSize="14"

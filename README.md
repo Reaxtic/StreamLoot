@@ -28,7 +28,7 @@ Stream Loot watches the right streams in the background, tracks every active dro
 - 🟢 **Live status** — see at a glance whether the watched streamer is online, and which campaign is general vs. channel‑specific.
 - 🧹 **Game priorities and exclusions** — order preferred games separately for Twitch and Kick, with automatic fallback to other available games. Explicit exclusions always take precedence.
 - 🪶 **Lightweight & quiet** — forces lowest stream quality, handles mature‑content gates, runs happily in the background or system tray.
-- 📋 **Copy game names** — select a game title in inventory and press Ctrl+C, or use the Copy button beside it to look up the game elsewhere.
+- 📋 **Copy game names** — click a game title in inventory to copy its full name and look up the game elsewhere. Hovering underlines the title and shows a hint; no separate Copy button is needed.
 - 🎨 **Modern UI** — clean dark theme, cyan accent, rounded cards, responsive layout.
 
 ---

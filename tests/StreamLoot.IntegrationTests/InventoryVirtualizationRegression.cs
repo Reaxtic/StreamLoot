@@ -94,12 +94,14 @@ static class InventoryVirtualizationRegression
                     return null;
                 }
                 var card = (DependencyObject)list.ItemContainerGenerator.ContainerFromItem(sample);
-                var gameNameText = FindNamed<TextBox>(card, "GameNameText")!;
-                Check(gameNameText.IsReadOnly && gameNameText.Text == sample.GameName,
-                    "inventory game title is selectable read-only text, distinct from the campaign name");
-                gameNameText.SelectAll();
-                Check(gameNameText.SelectedText == sample.GameName, "full game name can be selected for Ctrl+C");
-                var copyButton = FindNamed<Button>(card, "CopyGameNameButton")!;
+                var copyButton = FindNamed<Button>(card, "GameNameCopyTarget")!;
+                Check(copyButton.Content?.ToString() == sample.GameName && copyButton.Cursor == System.Windows.Input.Cursors.Hand,
+                    "game title itself is the copy target with a hand cursor");
+                Check(FindNamed<Button>(card, "CopyGameNameButton") == null,
+                    "inventory has no separate Copy button beside the title");
+                copyButton.ApplyTemplate();
+                Check(copyButton.Template.FindName("GameNameLabel", copyButton) is TextBlock label && label.Text == sample.GameName,
+                    "copy target renders as the game name without button chrome");
                 var clipboardField = typeof(InventoryView).GetField("_copyGameNameToClipboard", BindingFlags.Instance | BindingFlags.NonPublic)!;
                 var originalCopy = clipboardField.GetValue(view);
                 string? copiedName = null;
@@ -108,7 +110,7 @@ static class InventoryVirtualizationRegression
                     clipboardField.SetValue(view, new Action<string>(text => copiedName = text));
                     copyButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     Check(copiedName == sample.GameName && copiedName != sample.Name,
-                        "real inventory Copy button copies game name without modifying the system clipboard during tests");
+                        "clicking the game title copies its full name without modifying the system clipboard during tests");
                     Check(rows.Count == 150 && settings.GamePriority(sample) == 0 && settings.IsCampaignAllowedByWhitelist(sample),
                         "copying a game name preserves campaign source, priorities and exclusions");
                     clipboardField.SetValue(view, new Action<string>(_ => throw new System.Runtime.InteropServices.ExternalException("Clipboard busy")));
