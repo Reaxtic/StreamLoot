@@ -62,3 +62,9 @@ Gwiazdka, rzeczowe zgłoszenie błędu lub polecenie znajomemu pomagają w rozwo
 Stream Loot nie jest oficjalnym produktem Twitch ani Kick. Automatyzacja może być niezgodna z zasadami platform lub kampanii. Korzystasz na własne ryzyko. Licencja MIT dotyczy oprogramowania, a nie prawa do automatycznego zdobywania nagród.
 
 [Pełna dokumentacja po angielsku](README.md) · [Historia wydań](CHANGELOG.md) · [Kod i współpraca](CONTRIBUTING.md)
+
+## Postaw mi kawę
+
+Jeśli chcesz wesprzeć moją pracę nad Stream Loot, możesz postawić mi kawę. Wsparcie jest dobrowolne — program pozostaje darmowy i dostępny na MIT.
+
+[![Support me on Ko-fi](https://img.shields.io/badge/Support%20me-Ko--fi-00b9fe?style=for-the-badge&logo=kofi&logoColor=white)](https://ko-fi.com/reaxtic)

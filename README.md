@@ -124,3 +124,9 @@ Output: `UI/bin/Release/net10.0-windows10.0.17763.0/win-x64/publish/`.
 The Twitch watch-signal approach and channel-picker ideas were informed by [TwitchDropsMiner](https://github.com/DevilXD/TwitchDropsMiner) by DevilXD. This project is a separate C#/.NET implementation, not a drop-in replacement or affiliated release.
 
 Twitch, Kick, game names and reward artwork belong to their respective owners. See [CHANGELOG.md](CHANGELOG.md) for releases and the [earlier Polish development history](docs/HISTORIA_ZMIAN_PL.md).
+
+## Buy me a coffee
+
+If you'd like to support my work on Stream Loot, you can buy me a coffee. Donations are optional; the app remains free and MIT licensed.
+
+[![Support me on Ko-fi](https://img.shields.io/badge/Support%20me-Ko--fi-00b9fe?style=for-the-badge&logo=kofi&logoColor=white)](https://ko-fi.com/reaxtic)
